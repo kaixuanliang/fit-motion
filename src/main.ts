@@ -1663,20 +1663,21 @@ async function exportStatsImage(): Promise<void> {
       currentStage.renderAt(resumeAt);
     }
 
-    const details: Array<[string, string, string]> = [];
-    if (activity.heartRateAvailable && activity.avgHeartRate != null) {
-      details.push(['平均心率', String(Math.round(activity.avgHeartRate)), '次/分钟']);
-    }
-    if (activity.altitudeAvailable && activity.maxAltitude != null) {
-      details.push(['最高海拔', String(Math.round(activity.maxAltitude)), '米']);
-    }
-    if (activity.ascent != null) details.push(['累计爬升', String(Math.round(activity.ascent)), '米']);
-    if (activity.calories != null) details.push(['消耗热量', String(Math.round(activity.calories)), '千卡']);
-    if (activity.sportKey !== 'ride' && activity.avgSpeed > 0) {
-      details.push(['平均配速', formatPace(1000 / activity.avgSpeed), '/公里']);
-    } else if (activity.avgSpeedAvailable) {
-      details.push(['平均速度', formatSpeedKmh(activity.avgSpeed), '公里/小时']);
-    }
+    // 详细数据：与创作页数据卡完全同序、同口径（每行两列）。
+    // 缺失的指标保留占位（--），让卡片数量与顺序在任何记录上都一致。
+    const details: Array<[string, string, string]> = [
+      ['总距离', (activity.distanceM / 1000).toFixed(2), '公里'],
+      ['总时长', activity.elapsedAvailable ? formatDuration(activity.elapsedSec, true) : '--', '时:分:秒'],
+      ['运动时长', activity.durationAvailable ? formatDuration(activity.movingSec, true) : '--', '时:分:秒'],
+      ['最快速度', activity.maxSpeedAvailable ? formatSpeedKmh(activity.maxSpeed) : '--', 'km/h'],
+      ['平均速度', activity.avgSpeedAvailable ? formatSpeedKmh(activity.avgSpeed) : '--', 'km/h'],
+      ['最高心率', activity.heartRateAvailable && activity.maxHeartRate ? String(activity.maxHeartRate) : '--', '次/分'],
+      ['平均心率', activity.heartRateAvailable && activity.avgHeartRate != null
+        ? String(Math.round(activity.avgHeartRate)) : '--', '次/分'],
+      ['消耗热量', activity.calories != null ? String(Math.round(activity.calories)) : '--', '千卡'],
+      ['最高海拔', activity.altitudeAvailable && activity.maxAltitude != null
+        ? String(Math.round(activity.maxAltitude)) : '--', '米'],
+    ];
 
     const W = 1080;
     const pad = 54;
@@ -1750,10 +1751,13 @@ async function exportStatsImage(): Promise<void> {
     for (let i = 0; i < details.length; i += 1) {
       const col = i % 2;
       const row = Math.floor(i / 2);
-      const x = pad + col * (colW + 24);
+      // 奇数项时最后一张拉通整行，与创作页数据卡一致
+      const full = details.length % 2 === 1 && i === details.length - 1;
+      const cardW = full ? W - pad * 2 : colW;
+      const x = pad + (full ? 0 : col * (colW + 24));
       const top = y + row * 116;
       ctx.fillStyle = hexToRgba(theme.text, 0.045);
-      roundRect(x, top, colW, 104, 20);
+      roundRect(x, top, cardW, 104, 20);
       ctx.fill();
       ctx.strokeStyle = hexToRgba(theme.text, 0.09);
       ctx.lineWidth = 1.2;
@@ -1765,6 +1769,7 @@ async function exportStatsImage(): Promise<void> {
       ctx.font = `700 42px ${sans}`;
       ctx.fillStyle = theme.text;
       ctx.fillText(details[i][1], x + 28, top + 86);
+      if (details[i][1] === '--') continue;
       const valueWidth = ctx.measureText(details[i][1]).width;
       ctx.font = `400 20px ${sans}`;
       ctx.fillStyle = theme.accent;
