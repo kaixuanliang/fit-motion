@@ -1,7 +1,8 @@
 import { buildActivity, type Activity } from '../fit/activity';
+import { activityToFit } from './fit';
 import type { FitRecord, ParsedFit } from '../fit/types';
 
-export type TrackFormat = 'gpx' | 'tcx';
+export type TrackFormat = 'gpx' | 'tcx' | 'fit';
 
 /**
  * 把多段轨迹拼成一条（对齐华为运动健康的「合并运动记录」口径）：
@@ -150,8 +151,13 @@ ${points}
 }
 
 export function downloadTrack(activity: Activity, format: TrackFormat): void {
-  const content = format === 'gpx' ? activityToGpx(activity) : activityToTcx(activity);
-  const blob = new Blob([content], { type: format === 'gpx' ? 'application/gpx+xml' : 'application/vnd.garmin.tcx+xml' });
+  const content = format === 'gpx' ? activityToGpx(activity)
+    : format === 'tcx' ? activityToTcx(activity)
+      : activityToFit(activity);
+  const blob = new Blob([content as BlobPart], {
+    type: format === 'gpx' ? 'application/gpx+xml'
+      : format === 'tcx' ? 'application/vnd.garmin.tcx+xml' : 'application/octet-stream',
+  });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;

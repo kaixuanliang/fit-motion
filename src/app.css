@@ -119,6 +119,25 @@ body {
   width: 0;
 }
 
+/* 记录页：标题 + 查询条件 + 批量条整体吸顶，长列表上滑时一直在顶部 */
+.records-sticky {
+  position: sticky;
+  /* pane 有 14px 上内边距，负 top 让吸顶条真正贴住屏幕顶端，滚动内容不会从缝里露出来 */
+  top: -14px;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  /* 抵消 .pane 的内边距，让吸顶条的底色铺满整宽，卡片不会从两侧露出 */
+  margin: -14px -15px 0;
+  padding: 14px 15px 6px;
+  background: var(--bg);
+  box-shadow: 0 12px 14px -14px rgba(0, 0, 0, 0.75);
+}
+
+.records-sticky.stuck {
+  box-shadow: 0 14px 18px -12px rgba(0, 0, 0, 0.8);
+}
 .pane-head {
   display: flex;
   align-items: baseline;
@@ -1645,6 +1664,11 @@ body {
 .sub-actions .sub {
   flex: 1 1 0;
   min-width: 0;
+}
+
+/* 「导出数据长图」单独一行，与上一行操作按钮贴紧 */
+.sub-actions-next {
+  margin-top: -3px;
 }
 
 .sub {

@@ -350,10 +350,7 @@ export async function listPage(query: ListQuery): Promise<ListPage> {
   const limit = query.limit ?? PAGE_SIZE;
   const year = query.year ?? 'all';
   const src = query.src ?? 'all';
-  // GPX 分类把华为 JSON 归进来（同类点串数据），卡片上用「华为」徽标区分
-  const srcMatch = (row: ActivityMeta): boolean => src === 'all'
-    || row.src === src
-    || (src === 'gpx' && row.src === 'huawei');
+  const srcMatch = (row: ActivityMeta): boolean => matchesSource(row, src);
   const asc = query.order === 'asc';
 
   let bound: IDBKeyRange | null = null;
@@ -398,6 +395,80 @@ export async function listPage(query: ListQuery): Promise<ListPage> {
   const stats = await libraryStats();
   const total = stats.byBoth[`${year}|${src}`] ?? 0;
   return { items, next: exhausted ? null : last, total };
+}
+
+/** 来源筛选：GPX 分类把华为 JSON 归进来（同类点串数据），卡片上用「华为」徽标区分 */
+function matchesSource(row: ActivityMeta, src: SourceKind | 'all'): boolean {
+  return src === 'all'
+    || row.src === src
+    || (src === 'gpx' && row.src === 'huawei');
+}
+
+/**
+ * 当前筛选条件下的全部记录 id（不分页）。
+ * 批量「全选」用它 —— 只选已加载的那 20 条会让用户误以为删干净了。
+ */
+export async function listIds(query: { year?: number | 'all'; src?: SourceKind | 'all' } = {}): Promise<string[]> {
+  const year = query.year ?? 'all';
+  const src = query.src ?? 'all';
+  const ids: string[] = [];
+  await tx(STORE.activities, 'readonly', (t) => new Promise<void>((resolve, reject) => {
+    const request = t.objectStore(STORE.activities).index('by_start').openCursor(null, 'next');
+    request.onerror = () => reject(request.error ?? new Error('读取记录失败'));
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) {
+        resolve();
+        return;
+      }
+      const meta = cursor.value as ActivityMeta;
+      const metaYear = new Date(meta.start).getFullYear();
+      if (!meta.deleted && matchesSource(meta, src) && (year === 'all' || metaYear === year)) {
+        ids.push(meta.id);
+      }
+      cursor.continue();
+    };
+  }));
+  return ids;
+}
+
+/** 批量删除：一个事务里给全部命中记录打墓碑，避免逐条开事务（几百条时会卡） */
+export async function removeActivities(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const want = new Set(ids);
+  const now = Date.now();
+  await tx(STORE.activities, 'readwrite', async (t) => {
+    const store = t.objectStore(STORE.activities);
+    const rows = await req(store.getAll()) as ActivityMeta[];
+    for (const meta of rows) {
+      if (!want.has(meta.id)) continue;
+      meta.deleted = now;
+      meta.updated = now;
+      store.put(meta);
+    }
+  });
+  invalidate();
+}
+
+/** 批量恢复（撤销删除）：与单条恢复同口径，清掉备份位置让下次同步重新上传 */
+export async function restoreActivities(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const want = new Set(ids);
+  const now = Date.now();
+  await tx(STORE.activities, 'readwrite', async (t) => {
+    const store = t.objectStore(STORE.activities);
+    const rows = await req(store.getAll()) as ActivityMeta[];
+    for (const row of rows) {
+      if (!want.has(row.id)) continue;
+      row.deleted = 0;
+      row.updated = now;
+      row.where = {};
+      row.home = {};
+      row.backup = 0;
+      store.put(row);
+    }
+  });
+  invalidate();
 }
 
 export interface Stats extends LibraryStats {

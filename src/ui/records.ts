@@ -5,7 +5,12 @@
  * 否则「切到 2024 年再加载更多」会漏数据。
  */
 
-import { listPage, libraryStats, removeActivity, restoreActivity, loadFileBlob } from '../store/repo';
+import {
+  listPage, listIds, libraryStats,
+  removeActivity, removeActivities,
+  restoreActivity, restoreActivities,
+  loadFileBlob,
+} from '../store/repo';
 import { PAGE_SIZE } from '../store/repo';
 import { SOURCE_LABEL, type ActivityMeta, type ListQuery, type SourceKind } from '../store/types';
 import { showActionSheet, showConfirm } from './dialog';
@@ -142,7 +147,7 @@ function renderChips(stats: { byYear: Record<string, number>; bySrc: Record<stri
   years.scrollLeft = yearsScrollLeft;
 }
 
-function renderList(reset: boolean): void {
+function renderList(reset: boolean, appendCount = PAGE_SIZE): void {
   const list = $<HTMLDivElement>('record-list');
   const empty = $<HTMLDivElement>('records-empty');
   const foot = $<HTMLDivElement>('list-foot');
@@ -152,7 +157,9 @@ function renderList(reset: boolean): void {
 
   list.classList.toggle('selecting', state.selecting);
   if (reset) list.innerHTML = state.items.map(cardHtml).join('');
-  else list.insertAdjacentHTML('beforeend', state.items.slice(-PAGE_SIZE).map(cardHtml).join(''));
+  // 只追加真正新加载的那几条 —— 最后一页常常不足一页，按固定 20 条追加会把
+  // 上一页的卡片原样再画一遍（重复卡片 + 顺序乱跳）
+  else if (appendCount > 0) list.insertAdjacentHTML('beforeend', state.items.slice(-appendCount).map(cardHtml).join(''));
 
   const isEmpty = state.items.length === 0;
   if (empty) empty.hidden = !isEmpty || state.selecting;
@@ -172,15 +179,28 @@ function syncBatchBar(): void {
   const bar = $<HTMLDivElement>('batch-bar');
   const count = $<HTMLSpanElement>('batch-count');
   const del = $<HTMLButtonElement>('batch-delete');
+  const all = $<HTMLButtonElement>('batch-all');
   if (bar) bar.hidden = !state.selecting;
-  if (count) count.textContent = `已选 ${state.selected.size} 条`;
-  if (del) del.disabled = state.selected.size === 0;
+  const picked = state.selected.size;
+  const allPicked = picked > 0 && picked >= state.total;
+  if (count) count.textContent = allPicked ? `已选全部 ${picked} 条` : `已选 ${picked} 条`;
+  if (del) del.disabled = picked === 0;
+  if (all) all.textContent = allPicked ? '取消全选' : '全选';
 }
 
 function exitSelecting(): void {
   state.selecting = false;
   state.selected.clear();
   renderList(true);
+}
+
+/**
+ * 切换筛选条件时退出多选：选中的 id 属于上一个筛选范围，
+ * 留着会让「已选 N 条」和眼前的列表对不上。
+ */
+function dropSelection(): void {
+  if (!state.selecting) return;
+  exitSelecting();
 }
 
 export async function loadFirstPage(): Promise<void> {
@@ -215,7 +235,7 @@ export async function loadNextPage(): Promise<void> {
     state.items = state.items.concat(page.items);
     state.next = page.next;
     state.total = page.total;
-    renderList(false);
+    renderList(false, page.items.length);
   } finally {
     state.loading = false;
   }
@@ -350,6 +370,7 @@ export function initRecords(onOpen: OpenHandler, hooks: RecordsHooks = {}): Reco
     const sortBtn = (event.target as HTMLElement | null)?.closest<HTMLElement>('.cat-sort');
     if (sortBtn) {
       state.order = state.order === 'desc' ? 'asc' : 'desc';
+      dropSelection();
       void loadFirstPage();
       void refreshSummary();
       return;
@@ -358,6 +379,7 @@ export function initRecords(onOpen: OpenHandler, hooks: RecordsHooks = {}): Reco
     if (!chip) return;
     const src = chip.dataset.catSrc ?? 'all';
     state.src = src as SourceKind | 'all';
+    dropSelection();
     void refreshSummary();
     void loadFirstPage();
     const pane = $<HTMLElement>('records-pane');
@@ -369,6 +391,7 @@ export function initRecords(onOpen: OpenHandler, hooks: RecordsHooks = {}): Reco
     if (!chip) return;
     const year = chip.dataset.catYear ?? 'all';
     state.year = year === 'all' ? 'all' : Number(year);
+    dropSelection();
     void refreshSummary();
     void loadFirstPage();
     const pane = $<HTMLElement>('records-pane');
@@ -382,31 +405,47 @@ export function initRecords(onOpen: OpenHandler, hooks: RecordsHooks = {}): Reco
 
   // 批量选择条
   $<HTMLButtonElement>('batch-cancel')?.addEventListener('click', exitSelecting);
-  $<HTMLButtonElement>('batch-all')?.addEventListener('click', () => {
-    for (const item of state.items) state.selected.add(item.id);
-    renderList(true);
+  // 全选 = 当前筛选下的全部记录（含还没加载的分页）；再点一次取消全选
+  $<HTMLButtonElement>('batch-all')?.addEventListener('click', async () => {
+    if (state.selected.size > 0 && state.selected.size >= state.total) {
+      state.selected.clear();
+      renderList(true);
+      return;
+    }
+    const button = $<HTMLButtonElement>('batch-all');
+    if (button) button.disabled = true;
+    try {
+      const ids = await listIds({ year: state.year, src: state.src });
+      state.selected = new Set(ids);
+      renderList(true);
+    } finally {
+      if (button) button.disabled = false;
+    }
   });
   $<HTMLButtonElement>('batch-delete')?.addEventListener('click', async () => {
     if (state.selected.size === 0) return;
+    const ids = [...state.selected];
+    const hidden = ids.filter((id) => !state.items.some((item) => item.id === id)).length;
+    const scope = state.year === 'all' && state.src === 'all'
+      ? '全部记录'
+      : `当前筛选（${state.year === 'all' ? '全部年份' : state.year}年${state.src === 'all' ? '' : ` · ${SOURCE_LABEL[state.src]}`}）`;
     const ok = await showConfirm({
-      title: `删除选中的 ${state.selected.size} 条记录？`,
-      message: '删除后 30 天内可在「设置 → 最近删除」里恢复；若已开启云备份，下次同步会一并移除云端副本。',
+      title: `删除 ${ids.length} 条记录？`,
+      message: `${scope}下的 ${ids.length} 条会一起移入最近删除${hidden > 0 ? `（其中 ${hidden} 条还没加载到列表里）` : ''}。`
+        + '\n删除后 30 天内可在「设置 → 最近删除」里恢复；若已开启云备份，下次同步会一并移除云端副本。',
       confirmText: '删除',
       cancelText: '取消',
       tone: 'danger',
     });
     if (!ok) return;
-    const ids = [...state.selected];
-    for (const id of ids) await removeActivity(id);
-    state.items = state.items.filter((item) => !state.selected.has(item.id));
-    state.total = Math.max(0, state.total - ids.length);
+    await removeActivities(ids);
     state.selected.clear();
     state.selecting = false;
-    renderList(true);
     await refreshSummary();
+    await loadFirstPage();
     await hooks.onChanged?.();
     showToastAction(`已删除 ${ids.length} 条记录`, '撤销', async () => {
-      for (const id of ids) await restoreActivity(id);
+      await restoreActivities(ids);
       await refreshSummary();
       await loadFirstPage();
       await hooks.onChanged?.();
@@ -417,6 +456,9 @@ export function initRecords(onOpen: OpenHandler, hooks: RecordsHooks = {}): Reco
 
   $<HTMLElement>('records-pane')?.addEventListener('scroll', (event) => {
     const pane = event.currentTarget as HTMLElement;
+    // 查询条件吸顶后加一层阴影，让「列表在下面滚」这件事看得出来
+    const sticky = document.getElementById('records-sticky');
+    if (sticky) sticky.classList.toggle('stuck', pane.scrollTop > 2);
     if (pane.scrollTop + pane.clientHeight >= pane.scrollHeight - 160) void loadNextPage();
   });
 

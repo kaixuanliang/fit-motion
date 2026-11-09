@@ -1,7 +1,7 @@
 {
   "name": "fit-motion",
   "private": true,
-  "version": "1.1.8",
+  "version": "1.1.9",
   "type": "module",
   "description": "Turn FIT activity files into cinematic 9:16 motion reels.",
   "scripts": {

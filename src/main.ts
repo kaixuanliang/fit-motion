@@ -5,6 +5,7 @@ import { parseFit } from './fit/parser';
 import { parseGpx } from './gpx/parser';
 import { parseTcx } from './tcx/parser';
 import { activityToGpx, activityToTcx, mergeActivities, type TrackFormat } from './export/track';
+import { activityToFit } from './export/fit';
 import { saveBlob } from './export/save';
 import { SAMPLE_FIT_BASE64, SAMPLE_NAME } from './data/sample';
 import { TrackMap } from './render/map';
@@ -327,6 +328,7 @@ function bindEvents(): void {
     const files = fileInput.files ? Array.from(fileInput.files) : [];
     if (files.length) void handlePicked(files);
   });
+  byId<HTMLButtonElement>('export-track-fit').addEventListener('click', () => void exportTrack('fit'));
   byId<HTMLButtonElement>('export-track-gpx').addEventListener('click', () => void exportTrack('gpx'));
   byId<HTMLButtonElement>('export-track-tcx').addEventListener('click', () => void exportTrack('tcx'));
   byId<HTMLButtonElement>('clear-cache').addEventListener('click', () => void clearMapCacheAndReload());
@@ -792,10 +794,13 @@ async function saveTrack(activity: Activity, format: TrackFormat): Promise<void>
   if (!activity.points.length) {
     throw new Error('这条记录没有轨迹点，无法导出（可能轨迹还没同步到本机，联网后重试）');
   }
-  const content = format === 'gpx' ? activityToGpx(activity) : activityToTcx(activity);
-  const mime = format === 'gpx' ? 'application/gpx+xml' : 'application/vnd.garmin.tcx+xml';
+  const content = format === 'gpx' ? activityToGpx(activity)
+    : format === 'tcx' ? activityToTcx(activity)
+      : activityToFit(activity);
+  const mime = format === 'gpx' ? 'application/gpx+xml'
+    : format === 'tcx' ? 'application/vnd.garmin.tcx+xml' : 'application/octet-stream';
   const filename = `${activity.title}-${format}.${format}`;
-  await saveBlob(new Blob([content], { type: mime }), filename, mime);
+  await saveBlob(new Blob([content as BlobPart], { type: mime }), filename, mime);
   showToast(`已导出 ${format.toUpperCase()}：${filename}`);
 }
 

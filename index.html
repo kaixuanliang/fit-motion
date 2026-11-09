@@ -42,20 +42,22 @@
 
         <!-- ───────────────────────── 记录 ───────────────────────── -->
         <section class="pane" data-pane="records" id="records-pane">
-          <div class="pane-head">
-            <h1>记录</h1>
-            <span class="sum" id="records-sum">—</span>
-          </div>
-          <div class="cat-bar" id="cat-bar">
-            <div class="cat-fixed" id="cat-formats"></div>
-            <div class="cat-scroll" id="cat-years"></div>
-          </div>
-          <div class="batch-bar" id="batch-bar" hidden>
-            <button class="link" id="batch-cancel" type="button">取消</button>
-            <span class="batch-count" id="batch-count">已选 0 条</span>
-            <span class="batch-spacer"></span>
-            <button class="link" id="batch-all" type="button">全选</button>
-            <button class="link danger" id="batch-delete" type="button">删除</button>
+          <div class="records-sticky" id="records-sticky">
+            <div class="pane-head">
+              <h1>记录</h1>
+              <span class="sum" id="records-sum">—</span>
+            </div>
+            <div class="cat-bar" id="cat-bar">
+              <div class="cat-fixed" id="cat-formats"></div>
+              <div class="cat-scroll" id="cat-years"></div>
+            </div>
+            <div class="batch-bar" id="batch-bar" hidden>
+              <button class="link" id="batch-cancel" type="button">取消</button>
+              <span class="batch-count" id="batch-count">已选 0 条</span>
+              <span class="batch-spacer"></span>
+              <button class="link" id="batch-all" type="button">全选</button>
+              <button class="link danger" id="batch-delete" type="button">删除</button>
+            </div>
           </div>
           <div class="record-list" id="record-list"></div>
           <div class="list-foot" id="list-foot" hidden>
@@ -335,13 +337,17 @@
           <button class="cta" id="export-btn" type="button"><svg><use href="#i-download"/></svg> 导出 1080P MP4</button>
           <p class="cta-note" id="export-help">1080 × 1920 · 30FPS · MP4 · 导出时请保持此页面在前台</p>
 
+          <button class="cta share-cta" id="share-video-btn" type="button"><svg><use href="#i-share"/></svg> 分享视频给好友</button>
+
           <div class="sub-actions">
+            <button class="sub" id="export-track-fit" type="button">导出 FIT</button>
             <button class="sub" id="export-track-gpx" type="button">导出 GPX</button>
             <button class="sub" id="export-track-tcx" type="button">导出 TCX</button>
-            <button class="sub" id="stats-image-btn" type="button">导出数据长图</button>
           </div>
 
-          <button class="cta share-cta" id="share-video-btn" type="button"><svg><use href="#i-share"/></svg> 分享视频给好友</button>
+          <div class="sub-actions sub-actions-next">
+            <button class="sub" id="stats-image-btn" type="button">导出数据长图</button>
+          </div>
 
           <button class="sub clear-cache-btn" id="clear-cache" type="button">清除地图缓存</button>
         </section>
