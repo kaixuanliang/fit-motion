@@ -6,6 +6,7 @@ import android.content.ActivityNotFoundException;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.graphics.Color;
+import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.os.Build;
 import android.os.SystemClock;
@@ -62,6 +63,10 @@ public class MainActivity extends Activity {
     private FrameLayout splash;
     private long splashShownAt;
     private boolean splashHiding;
+    /** 当前焦点是否在 H5 输入框里（长按要还给输入框，否则粘贴菜单出不来） */
+    private boolean editingField;
+    /** 上一次上报的键盘高度（CSS px），只在变化时回调 JS */
+    private int lastImeInset = -1;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -84,12 +89,36 @@ public class MainActivity extends Activity {
 
         // 长按不再拉起系统的文字选择菜单（查看/复制/分享/翻译）——
         // App 里没有要划选的正文，这个手势已经让给了记录页的长按操作菜单。
+        // 但输入框例外：这里吞掉长按会让 Token / AppKey 之类完全没法粘贴，
+        // 所以命中输入框时返回 false，把手势还给 WebView。
         webView.setOnLongClickListener(new View.OnLongClickListener() {
             @Override
             public boolean onLongClick(View v) {
-                return true;
+                if (editingField) return false;
+                WebView.HitTestResult hit = webView.getHitTestResult();
+                return hit == null || hit.getType() != WebView.HitTestResult.EDIT_TEXT_TYPE;
             }
         });
+
+        // 键盘高度上报给 H5：沉浸式 + WebView 下 adjustResize 在部分机型不生效，
+        // 底部抽屉表单会被键盘完全挡住，让前端按这个值把抽屉抬起来。
+        getWindow().getDecorView().getViewTreeObserver().addOnGlobalLayoutListener(
+                new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
+                    @Override
+                    public void onGlobalLayout() {
+                        if (webView == null) return;
+                        Rect visible = new Rect();
+                        getWindow().getDecorView().getWindowVisibleDisplayFrame(visible);
+                        int overlap = getWindow().getDecorView().getHeight() - visible.bottom;
+                        float density = getResources().getDisplayMetrics().density;
+                        // 小于 120dp 的重叠当成系统栏 / 误报，不算键盘
+                        int inset = overlap > 120 * density ? Math.round(overlap / density) : 0;
+                        if (inset == lastImeInset) return;
+                        lastImeInset = inset;
+                        webView.evaluateJavascript(
+                                "window.FitMotionJS&&window.FitMotionJS.setKeyboardInset(" + inset + ")", null);
+                    }
+                });
 
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -466,6 +495,12 @@ public class MainActivity extends Activity {
         private FileOutputStream stream;
         private String fileName = "fit-motion.mp4";
         private String mimeType = "video/mp4";
+
+        /** H5 输入框聚焦 / 失焦时同步过来，长按判断要用（命中结果偶尔拿不到 EDIT_TEXT） */
+        @JavascriptInterface
+        public void setEditing(boolean editing) {
+            editingField = editing;
+        }
 
         @JavascriptInterface
         public void beginExport(String title) {

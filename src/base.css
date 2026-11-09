@@ -63,6 +63,8 @@ textarea,
 .export-report {
   -webkit-user-select: text;
   user-select: text;
+  /* 输入框要能长按弹出粘贴菜单，别被上面的 touch-callout: none 带坏 */
+  -webkit-touch-callout: default;
 }
 
 html {

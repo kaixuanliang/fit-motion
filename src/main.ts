@@ -27,6 +27,7 @@ import { renderMusicPcm } from './audio/synth';
 import type { ActivityMeta } from './store/types';
 import { downloadTrack, probeAll } from './backup/sync';
 import { trimCache } from './store/cache';
+import { initKeyboard } from './ui/keyboard';
 
 declare global {
   interface Window {
@@ -44,6 +45,8 @@ declare global {
       isExportCancelled?: () => boolean;
       /** 用系统浏览器打开外部页面（百度网盘授权页） */
       openUrl?: (url: string) => void;
+      /** 输入框聚焦状态，原生用它决定长按是否放行（粘贴菜单） */
+      setEditing?: (editing: boolean) => void;
     };
   }
 }
@@ -198,6 +201,7 @@ async function boot(): Promise<void> {
     void records?.reload();
   });
   initMusic();
+  initKeyboard();
   window.addEventListener('fitmotion:music-changed', () => {
     // 曲目变了：预渲染新缓冲；正在播放就从当前进度无缝切过去
     if (!currentStage) return;

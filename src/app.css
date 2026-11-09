@@ -2417,8 +2417,10 @@ body {
 .fm-sheet {
   align-self: flex-end;
   width: 100%;
-  margin: 0 10px calc(10px + env(safe-area-inset-bottom));
-  max-height: 86vh;
+  /* 键盘弹起时整块抬高：--fm-kb-inset 由原生桥注入（沉浸式 WebView 下
+     adjustResize 不可靠，纯网页则由 visualViewport 兜底计算） */
+  margin: 0 10px calc(10px + env(safe-area-inset-bottom) + var(--fm-kb-inset, 0px));
+  max-height: min(86vh, calc(100% - var(--fm-kb-inset, 0px) - 20px));
   overflow-y: auto;
   border-radius: 20px;
   padding: 18px 16px 14px;
