@@ -15,16 +15,21 @@ import { showActionSheet, showAlert, showConfirm, showForm } from './dialog';
 import { PROVIDER_META, type ProviderConfig, type ProviderId } from '../backup/adapter';
 import {
   boundProviders,
+  hasSessionPassword,
   isSyncing,
   MAX_TARGETS,
   probeAll,
   readAllConfigs,
   readConfig,
+  readCryptoConfig,
   remoteUsage,
   SEAL_RATIO,
+  setSessionPassword,
   syncNow,
+  type CryptoConfig,
   type ProviderTargets,
 } from '../backup/sync';
+import { randomSalt } from '../backup/crypto';
 
 const $ = <T extends HTMLElement>(id: string): T | null => document.getElementById(id) as T | null;
 
@@ -38,6 +43,8 @@ const repoUsageCache = new Map<ProviderId, { index: number; used: number }[]>();
 const CONFIG_KEY: Record<ProviderId, string> = {
   gitee: 'backup.gitee',
   github: 'backup.github',
+  webdav: 'backup.webdav',
+  baidu: 'backup.baidu',
 };
 
 export function mb(bytes: number): string {
@@ -153,8 +160,8 @@ export async function renderBackup(): Promise<void> {
   if (note) {
     note.textContent = bound.length === 0
       ? '绑定任意一端即可开始自动备份'
-      : bound.length === 2
-        ? '两端互为副本，任何一端能连上就够'
+      : bound.length >= 2
+        ? '多端互为副本，任何一端能连上就够'
         : `只绑了 ${PROVIDER_META[bound[0]].label}，建议再绑一端做副本`;
   }
   const state = $<HTMLElement>('backup-state');
@@ -178,6 +185,13 @@ export async function renderBackup(): Promise<void> {
   if (bar) bar.style.width = `${Math.min(100, (cache.bytes / CACHE_BUDGET) * 100).toFixed(1)}%`;
   const limit = $<HTMLElement>('cache-limit');
   if (limit) limit.textContent = `${mb(CACHE_BUDGET)}（超出后淘汰最久未打开的记录）`;
+
+  // 加密备份状态
+  const crypto = await readCryptoConfig();
+  const cryptoState = $<HTMLElement>('crypto-state');
+  if (cryptoState) cryptoState.textContent = crypto?.enabled ? '已开启 · 轨迹密文上传' : '未开启';
+  const toggle = $<HTMLButtonElement>('crypto-toggle');
+  if (toggle) toggle.textContent = crypto?.enabled ? '关闭加密备份' : '开启加密备份';
 }
 
 /** 容量条要真去问仓库，慢一点，所以先画静态部分再异步补上。 */
@@ -318,6 +332,100 @@ async function bindProvider(id: ProviderId, mode: 'edit' | 'add' = 'edit', editI
   }
   const changedIdx = mode === 'edit' ? (current ? (editIndex ?? activeIdx) : 0) : current ? current.targets.length : 0;
   const editing = mode === 'edit' && current ? current.targets[changedIdx] : null;
+
+  // WebDAV 与百度网盘的表单/校验与 git 系不同
+  if (id === 'webdav') {
+    const values = await showForm({
+      title: mode === 'add' ? '给 WebDAV 加一个目录' : '绑定 WebDAV 网盘',
+      desc: '坚果云：网页设置 → 安全选项 → 第三方应用管理，生成「应用密码」后填入。群晖 / Alist 等同理。',
+      confirmText: '保存并验证',
+      fields: [
+        { key: 'server', label: '服务器地址', value: editing?.owner ?? '', placeholder: 'https://dav.jianguoyun.com/dav/', mono: true },
+        { key: 'user', label: '账号', value: editing?.user ?? '', placeholder: '登录邮箱', mono: true },
+        { key: 'password', label: '应用密码', value: editing?.token ?? '', placeholder: '不是登录密码，是应用密码', type: 'password', mono: true },
+        { key: 'dir', label: '远端目录', value: editing?.repo ?? 'fitmotion', placeholder: 'fitmotion', mono: true },
+      ],
+      validate: (form) => {
+        if (!/^https?:\/\//.test(form.server.trim())) return '服务器地址要以 http(s):// 开头';
+        if (!form.user) return '请填写账号';
+        if (!form.password) return '请填写应用密码';
+        return null;
+      },
+    });
+    if (!values) return;
+    const server = values.server.trim().replace(/\/+$/, '');
+    let host = server;
+    try { host = new URL(server).hostname; } catch { /* 校验已挡住 */ }
+    const config: ProviderConfig = { token: values.password, owner: server, repo: values.dir.trim() || 'fitmotion', branch: '', user: values.user.trim() };
+    const dup = current?.targets.findIndex((row, i) => i !== changedIdx && row.owner === server && row.repo === config.repo) ?? -1;
+    if (dup >= 0) {
+      void showAlert(`这个目录已经在队列里（第 ${dup + 1} 个）`, { tone: 'error' });
+      return;
+    }
+    const next: ProviderTargets = current
+      ? mode === 'edit'
+        ? { targets: current.targets.map((row, i) => (i === changedIdx ? config : row)), active: Math.min(current.active, current.targets.length - 1) }
+        : { targets: [...current.targets, config], active: current.active }
+      : { targets: [config], active: 0 };
+    await setSetting(CONFIG_KEY[id], next);
+    await renderBackup();
+    setSyncCard(true);
+    setSyncProgress('正在验证 WebDAV…', 30);
+    const status = await probeAll(12000);
+    const mine = status.find((row) => row.id === id);
+    if (!mine || !mine.ok) {
+      setDot(id, 'bad');
+      setSyncProgress('WebDAV 验证失败', 100, mine?.message ?? '连不上，检查地址、账号或应用密码');
+      void showAlert(mine?.message ?? 'WebDAV 连不上', { title: '连接失败', tone: 'error' });
+      return;
+    }
+    setDot(id, 'ok');
+    setSyncProgress(`WebDAV 已连接（${mine.latencyMs} ms）`, 100, `${mine.message} · ${host}/${config.repo}`);
+    await renderBackup();
+    void refreshRemoteUsage();
+    return;
+  }
+
+  if (id === 'baidu') {
+    const values = await showForm({
+      title: '绑定百度网盘',
+      desc: '需要在百度网盘开放平台（pan.baidu.com/union）实名注册个人开发者并创建应用，拿到 AppKey 后授权。授权完成后把 access_token 粘贴到这里。',
+      confirmText: '保存并验证',
+      fields: [
+        { key: 'token', label: 'Access Token', value: editing?.token ?? '', placeholder: '百度网盘开放平台授权后获得的 access_token', type: 'password', mono: true },
+        { key: 'dir', label: '远端目录', value: editing?.repo ?? 'apps/fitmotion', placeholder: 'apps/fitmotion', mono: true },
+      ],
+      validate: (form) => {
+        if (form.token.length < 20) return 'access_token 看起来不对，请整段粘贴';
+        return null;
+      },
+    });
+    if (!values) return;
+    const config: ProviderConfig = { token: values.token.trim(), owner: 'baidu', repo: values.dir.trim() || 'apps/fitmotion', branch: '' };
+    const next: ProviderTargets = current
+      ? mode === 'edit'
+        ? { targets: current.targets.map((row, i) => (i === changedIdx ? config : row)), active: Math.min(current.active, current.targets.length - 1) }
+        : { targets: [...current.targets, config], active: current.active }
+      : { targets: [config], active: 0 };
+    await setSetting(CONFIG_KEY[id], next);
+    await renderBackup();
+    setSyncCard(true);
+    setSyncProgress('正在验证百度网盘…', 30);
+    const status = await probeAll(12000);
+    const mine = status.find((row) => row.id === id);
+    if (!mine || !mine.ok) {
+      setDot(id, 'bad');
+      setSyncProgress('百度网盘验证失败', 100, mine?.message ?? 'token 无效或已过期');
+      void showAlert(mine?.message ?? '百度网盘连接失败', { title: '连接失败', tone: 'error' });
+      return;
+    }
+    setDot(id, 'ok');
+    setSyncProgress(`百度网盘已连接（${mine.latencyMs} ms）`, 100, mine.message);
+    await renderBackup();
+    void refreshRemoteUsage();
+    return;
+  }
+
   const values = await showForm({
     title: mode === 'add' ? `给 ${meta.label} 加一个仓库` : `编辑 ${meta.label} 仓库`,
     desc: mode === 'add'
@@ -476,9 +584,60 @@ export function initPanels(options: { currentTheme: () => string; applyTheme: (i
     button.addEventListener('click', () => void bindProvider(button.dataset.bindAdd as ProviderId, 'add'));
   });
 
+  // 加密备份开关：开启时设密码（PBKDF2 + AES-256-GCM），关闭时确认并停用
+  $<HTMLButtonElement>('crypto-toggle')?.addEventListener('click', async () => {
+    const crypto = await readCryptoConfig();
+    if (crypto?.enabled) {
+      const ok = await showConfirm({
+        title: '关闭加密备份？',
+        message: '已上传的密文会保留，但之后的同步会以明文上传轨迹。云端旧密文仍需密码才能解开。',
+        confirmText: '关闭',
+        tone: 'danger',
+      });
+      if (!ok) return;
+      await setSetting<CryptoConfig | null>('backup.crypto', null);
+      setSessionPassword('');
+      await renderBackup();
+      return;
+    }
+    const values = await showForm({
+      title: '设置备份密码',
+      desc: '端到端加密：轨迹用密码加密后上传，云盘/Git 服务器都看不到内容。密码不保存在任何地方——忘记密码将无法恢复云端数据。',
+      confirmText: '开启加密',
+      fields: [
+        { key: 'pw', label: '备份密码', type: 'password', placeholder: '至少 8 位' },
+        { key: 'pw2', label: '确认密码', type: 'password', placeholder: '再输一遍' },
+      ],
+      validate: (form) => {
+        if (form.pw.length < 8) return '密码至少 8 位';
+        if (form.pw !== form.pw2) return '两次输入不一致';
+        return null;
+      },
+    });
+    if (!values) return;
+    const config: CryptoConfig = { enabled: true, salt: randomSalt(), iterations: 310_000 };
+    await setSetting('backup.crypto', config);
+    setSessionPassword(values.pw);
+    await renderBackup();
+    void showAlert('已开启加密备份。之后同步的轨迹都会先加密再上传；App 重启后第一次同步会再询问密码。');
+  });
+
   $<HTMLButtonElement>('sync-now')?.addEventListener('click', () => {
     void (async () => {
       if (isSyncing()) return;
+      // 开了加密但本次会话还没输过密码：先问一次
+      const crypto = await readCryptoConfig();
+      if (crypto?.enabled && !hasSessionPassword()) {
+        const values = await showForm({
+          title: '输入备份密码',
+          desc: '轨迹将以密文上传/解密下载。密码只在本次会话内使用。',
+          confirmText: '开始同步',
+          fields: [{ key: 'pw', label: '备份密码', type: 'password', placeholder: '备份密码' }],
+          validate: (form) => (form.pw ? null : '请输入备份密码'),
+        });
+        if (!values) return;
+        setSessionPassword(values.pw);
+      }
       setSyncCard(true);
       setSyncProgress('准备同步…', 0);
       const sync = $<HTMLButtonElement>('sync-now');

@@ -118,7 +118,7 @@ export async function importFiles(
 
   return {
     results,
-    added: results.filter((r) => r.status === 'added').length,
+    added: results.filter((r) => r.status === 'added' || r.status === 'replaced').length,
     duplicated: results.filter((r) => r.status === 'duplicate-file' || r.status === 'duplicate-motion').length,
     filtered: results.filter((r) => r.status === 'too-short').length,
     failed: results.filter((r) => r.status === 'error' || r.status === 'no-gps').length,

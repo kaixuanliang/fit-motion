@@ -26,6 +26,9 @@ export interface MotionFp {
 /** 云端备份状态：0 待备份、1 单端已备份、2 双端已备份。 */
 export type BackupState = 0 | 1 | 2;
 
+/** 备份通道：git 系两家 + WebDAV（坚果云等）+ 百度网盘。 */
+export type BackupProviderId = 'github' | 'gitee' | 'webdav' | 'baidu';
+
 export interface ActivityMeta {
   id: string;
   /** 展示名，例如「晨骑」「下班通勤」 */
@@ -74,12 +77,12 @@ export interface ActivityMeta {
    * 各端已备份到的时间戳（值是推送时的 meta.updated）。
    * 有它才能算「还差哪一端没推」，也能让两端各自增量同步。
    */
-  where?: Partial<Record<'github' | 'gitee', number>>;
+  where?: Partial<Record<BackupProviderId, number>>;
   /**
    * 各端「当前版本住在哪个仓库」，值是 `owner/repo` 键（多仓库轮换后同一端
    * 的轨迹可能先后落在不同库里）。删除和按需下载按它定位；缺省按 0 号库。
    */
-  home?: Partial<Record<'github' | 'gitee', string>>;
+  home?: Partial<Record<BackupProviderId, string>>;
   /** 最近一次打开时间，本地缓存 LRU 淘汰用 */
   opened?: number;
   /** 合并轨迹的父记录 */
@@ -136,14 +139,14 @@ export interface QueueItem {
   id: string;
   activityId: string;
   kind: QueueKind;
-  provider: 'github' | 'gitee';
+  provider: BackupProviderId;
   attempts: number;
   nextAt: number;
   message: string;
 }
 
 export interface ImportResult {
-  status: 'added' | 'duplicate-file' | 'duplicate-motion' | 'no-gps' | 'too-short' | 'error';
+  status: 'added' | 'replaced' | 'duplicate-file' | 'duplicate-motion' | 'no-gps' | 'too-short' | 'error';
   name: string;
   id?: string;
   /** 命中的既有记录，用于「重复跳过」提示 */
@@ -154,8 +157,12 @@ export interface ImportResult {
 export interface ListQuery {
   year?: number | 'all';
   src?: SourceKind | 'all';
-  /** 上一页最后一条的 start，null 表示第一页 */
+  /** 上一页最后一条的 start（降序），null 表示第一页 */
   before?: number | null;
+  /** 升序分页的游标：上一页最后一条的 start */
+  after?: number | null;
+  /** 排序方向，默认 desc（最新在前） */
+  order?: 'asc' | 'desc';
   limit?: number;
 }
 

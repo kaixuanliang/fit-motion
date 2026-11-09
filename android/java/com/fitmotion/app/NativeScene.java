@@ -963,7 +963,7 @@ final class NativeRouteScene implements NativeScene {
         }
 
         if (wholeRoute) {
-            int n = decimate(3.2f);
+            int n = decimate(3.2f, count - 1);
             float brightness = 0.55f + 0.45f * routeFade;
             float coreAlpha = 0.32f + 0.68f * routeFade;
             float glowAlpha = 0.13f * routeFade;
@@ -997,6 +997,15 @@ final class NativeRouteScene implements NativeScene {
         }
 
         float total = Math.max(1f, cumulative[count - 1]);
+
+        // Walked trail: persist in world space so it never "snake-vanishes" behind
+        // the camera. Dim pass under the bright head ribbon (matches the TS preview).
+        if (endIndex >= 2) {
+            int walkedN = decimate(3.2f, endIndex);
+            if (walkedN >= 2) {
+                ribbonPass(decimX, decimY, decimT, walkedN, ROUTE_CORE * 0.67f, 0.35f, 0.75f, true);
+            }
+        }
 
         // Untravelled remainder: dim, no casing, no joints.
         if (endIndex < count - 1) {
@@ -1042,9 +1051,10 @@ final class NativeRouteScene implements NativeScene {
     private float[] decimY = new float[0];
     private float[] decimT = new float[0];
 
-    /** Keeps every point that is at least {@code spacing} screen px from the last one. */
-    private int decimate(float spacing) {
-        int count = screenX.length;
+    /** Keeps every point that is at least {@code spacing} screen px from the last one,
+     *  walking the route up to {@code endIdx} (inclusive). */
+    private int decimate(float spacing, int endIdx) {
+        int count = Math.min(screenX.length, endIdx + 1);
         if (decimX.length < count + 2) {
             decimX = new float[count + 2];
             decimY = new float[count + 2];

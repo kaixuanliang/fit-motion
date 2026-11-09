@@ -17,7 +17,7 @@ import { initRecords, type RecordsApi } from './ui/records';
 import { initImport, type ImportApi } from './ui/import-page';
 import { initMerge, type MergeApi } from './ui/merge-page';
 import { initTrash, type TrashApi } from './ui/trash-page';
-import { showToast } from './ui/toast';
+import { showToast, showToastAction } from './ui/toast';
 import { initPanels, refreshRemoteUsage, renderBackup, renderSettings } from './ui/panels';
 import { loadActivity, purgeExpiredTrash, setRemoteTrackResolver } from './store/repo';
 import { initMusic, currentMusicId, musicById } from './ui/music';
@@ -36,12 +36,8 @@ declare global {
       finishSave: () => string;
       cancelSave: () => void;
       nativeExportUrl?: () => string;
-      beginSurfaceExport?: (width: number, height: number, bitrate: number, fps: number,
-        left: number, top: number, right: number, bottom: number) => boolean;
-      copySurfaceFrame?: (left: number, top: number, right: number, bottom: number, index: number) => boolean;
-      finishSurfaceExport?: () => string;
-      cancelSurfaceExport?: () => void;
-      lastSurfaceError?: () => string;
+      shareUri?: (uri: string, mime: string) => boolean;
+      shareExport?: (name: string, mime: string) => boolean;
       beginExport?: (title: string) => void;
       updateExportProgress?: (percent: number, text: string) => void;
       endExport?: () => void;
@@ -393,6 +389,12 @@ function bindEvents(): void {
         // 存不了就本次会话内生效
       }
       syncExportSpeedUi();
+      // 点击倍速 = 以该倍速从头预览播放，导出也是同一个倍速（单一选中态）。
+      if (!exporting && currentStage && !posterMode && cacheReady) {
+        pausePlayback();
+        playhead = 0;
+        startPlayback();
+      }
     });
   });
 
@@ -430,18 +432,6 @@ function bindEvents(): void {
   byId<HTMLButtonElement>('export-btn').addEventListener('click', () => {
     void exportCurrent();
   });
-  // One export entry only: the primary 1080P button routes to the native GPU
-  // exporter on Android. The old duplicate "原生直出" button is gone; these
-  // secondary actions sit under the primary button instead.
-  const nativePreviewButton = byId<HTMLButtonElement>('native-preview-btn');
-  if (window.FitMotionAndroid && typeof window.FitMotionAndroid.nativeExportUrl === 'function') {
-    nativePreviewButton.hidden = false;
-    nativePreviewButton.addEventListener('click', () => {
-      void previewNativeScene();
-    });
-  } else {
-    nativePreviewButton.hidden = true;
-  }
   byId<HTMLButtonElement>('stats-image-btn').addEventListener('click', () => {
     void exportStatsImage();
   });
@@ -548,8 +538,6 @@ function setStudioBusy(busy: boolean): void {
   if (nativeButton) nativeButton.disabled = busy;
   const statsButton = document.getElementById('stats-image-btn') as HTMLButtonElement | null;
   if (statsButton) statsButton.disabled = busy;
-  const previewButton = document.getElementById('native-preview-btn') as HTMLButtonElement | null;
-  if (previewButton) previewButton.disabled = busy;
   byId<HTMLButtonElement>('play-btn').disabled = busy;
   byId<HTMLButtonElement>('big-play').disabled = busy;
   byId<HTMLButtonElement>('replay-btn').disabled = busy;
@@ -821,11 +809,6 @@ function openStudio(activity: Activity): void {
   setCacheReady(false);
   playhead = 0;
   showPane('create');
-
-  // 上一次的浏览状态（分段数据展开、滚动位置）不该带进新记录，
-  // 否则预览被顶出屏幕、看起来还停在上一条的数据上。
-  const splitPanel = studio.querySelector<HTMLDetailsElement>('.split-panel');
-  if (splitPanel) splitPanel.open = false;
   studio.scrollTop = 0;
 
   populateSide(activity);
@@ -874,6 +857,9 @@ function populateSide(activity: Activity): void {
   byId<HTMLElement>('total-duration').textContent = activity.durationAvailable
     ? formatDuration(activity.durationSec, true)
     : '--';
+  byId<HTMLElement>('total-elapsed').textContent = activity.elapsedAvailable
+    ? formatDuration(activity.elapsedSec, true)
+    : '--';
   byId<HTMLElement>('avg-hr').innerHTML = activity.avgHeartRate ? `${activity.avgHeartRate} <em>次/分钟</em>` : '--';
   byId<HTMLElement>('avg-speed').innerHTML = activity.avgSpeedAvailable
     ? `${formatSpeedKmh(activity.avgSpeed)} <em>公里/小时</em>`
@@ -885,49 +871,6 @@ function populateSide(activity: Activity): void {
     ? `${Math.round(activity.calories)} <em>千卡</em>`
     : '--';
   byId<HTMLElement>('stage-device').textContent = `${activeTheme().label} · 1080P MP4`;
-  byId<HTMLElement>('split-caption').textContent = activity.sportKey === 'ride' ? '每 1 KM · 平均速度' : '每 1 KM · 配速';
-  renderSplits(activity);
-}
-
-function renderSplits(activity: Activity): void {
-  const container = byId<HTMLDivElement>('splits');
-  container.replaceChildren();
-  if (activity.splits.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'splits-empty';
-    empty.textContent = activity.timeAvailable ? '暂无分段数据' : '文件没有时间信息，无法计算分段';
-    container.appendChild(empty);
-    return;
-  }
-  const maxSpeed = Math.max(...activity.splits.map((split) => split.speed), 0.1);
-  for (const split of activity.splits) {
-    const row = document.createElement('div');
-    row.className = 'split-row';
-
-    const km = document.createElement('span');
-    km.className = 'km';
-    km.innerHTML = `${String(split.index).padStart(2, '0')}<i>KM</i>`;
-
-    const bar = document.createElement('div');
-    bar.className = 'split-bar';
-    const fill = document.createElement('span');
-    fill.style.width = `${Math.max(4, (split.speed / maxSpeed) * 100)}%`;
-    bar.appendChild(fill);
-
-    const pace = document.createElement('span');
-    pace.className = 'pace';
-    pace.textContent = activity.sportKey === 'ride'
-      ? `${formatSpeedKmh(split.speed)}`
-      : formatPace(1000 / split.speed);
-    if (activity.sportKey === 'ride') pace.title = `${formatSpeedKmh(split.speed)} km/h`;
-
-    const hr = document.createElement('span');
-    hr.className = `hr${split.heartRate && activity.maxHeartRate && split.heartRate > activity.maxHeartRate * 0.92 ? '' : ' low'}`;
-    hr.textContent = split.heartRate ? String(split.heartRate) : '--';
-
-    row.append(km, bar, pace, hr);
-    container.appendChild(row);
-  }
 }
 
 /** 进入全屏播放：舞台铺满屏幕，自动从当前进度续播。 */
@@ -997,16 +940,18 @@ async function syncMusicToPlayhead(): Promise<void> {
   } catch {
     return;
   }
-  if (playing && token === studioToken) await musicPlayer.play(playhead, 1);
+  if (playing && token === studioToken) await musicPlayer.play(playhead, Math.max(1, exportSpeed));
 }
 
 function tick(now: number): void {
   if (!currentStage || !playing) return;
-  // 预览恒为 1× 原速：倍速只影响导出成片（见 exportTimelineScale）。
-  // 播放头逐帧推进并限幅（单帧最多走 0.25s）：主线程若被偶发长任务冻住，
-  // 墙钟差会把播放头一下推到几十秒外（表现为「进度条突然跳到中间」）；
+  // 预览倍速与导出倍速共用 exportSpeed（同一选中态）：预览按倍速推进播放头，
+  // 导出成片同样按倍速压缩时间线，两边看到的节奏一致。
+  // 播放头逐帧推进并限幅（单帧最多走 0.25s×倍速）：主线程若被偶发长任务
+  // 冻住，墙钟差会把播放头一下推到几十秒外（表现为「进度条突然跳到中间」）；
   // 限幅后冻结只是一次短暂停顿，恢复后从原位继续。
-  const next = basePlayhead + Math.min(0.25, (now - baseWall) / 1000);
+  const rate = Math.max(1, exportSpeed);
+  const next = basePlayhead + Math.min(0.25 * rate, ((now - baseWall) / 1000) * rate);
   if (next >= currentStage.duration) {
     playhead = currentStage.duration;
     currentStage.renderAt(playhead);
@@ -1369,61 +1314,6 @@ function nativeScenePayload(
   };
 }
 
-function showPreviewImage(dataUrl: string): void {
-  document.getElementById('native-preview-modal')?.remove();
-  const modal = document.createElement('div');
-  modal.id = 'native-preview-modal';
-  modal.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(6,10,12,.92);'
-    + 'display:flex;align-items:center;justify-content:center;padding:16px;cursor:zoom-out';
-  const image = document.createElement('img');
-  image.src = dataUrl;
-  image.style.cssText = 'max-width:100%;max-height:92vh;border-radius:14px;'
-    + 'box-shadow:0 18px 60px rgba(0,0,0,.55)';
-  modal.appendChild(image);
-  modal.addEventListener('click', () => modal.remove());
-  document.body.appendChild(modal);
-}
-
-async function previewNativeScene(): Promise<void> {
-  if (exporting || !currentActivity || !currentStage) return;
-  const bridge = window.FitMotionAndroid;
-  if (!bridge || typeof bridge.nativeExportUrl !== 'function') return;
-  let base = '';
-  try {
-    base = bridge.nativeExportUrl();
-  } catch {
-    base = '';
-  }
-  if (!base) {
-    showToast('原生渲染服务启动失败。', true);
-    return;
-  }
-  exporting = true;
-  pausePlayback();
-  exportOverlay.hidden = false;
-  exportProgress.style.width = '0%';
-  exportStatus.textContent = '渲染静帧预览…';
-  try {
-    const theme = activeTheme();
-    const date = currentActivity.timeAvailable ? formatDateParts(currentActivity.startTime) : null;
-    const response = await fetch(`${base}/preview`, {
-      method: 'POST',
-      mode: 'cors',
-      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-      body: JSON.stringify(nativeScenePayload(theme, date, exportTimelineScale())),
-    });
-    if (!response.ok) throw new Error('预览失败（HTTP ' + response.status + '）');
-    const result = (await response.json()) as { ok?: boolean; image?: string; error?: string };
-    if (!result.ok || !result.image) throw new Error(result.error || '预览失败');
-    showPreviewImage(result.image);
-  } catch (error) {
-    showToast(error instanceof Error ? error.message : '预览失败', true);
-  } finally {
-    exporting = false;
-    exportOverlay.hidden = true;
-  }
-}
-
 /**
  * 倍速标注：1× 不展示，>1× 显示「2× 倍速」供导出过程提示用。
  */
@@ -1594,6 +1484,15 @@ async function exportNativeScene(): Promise<void> {
       ['合计耗时', `${totalSeconds.toFixed(1)} 秒`],
       ['保存结果', result.uri ? '已保存到手机相册' : '未保存'],
     ]);
+    if (result.uri) {
+      const uri = result.uri;
+      showToastAction('视频已保存到手机相册', '分享', () => {
+        const bridge = window.FitMotionAndroid;
+        if (!bridge?.shareUri?.(uri, 'video/mp4')) {
+          showToast('分享面板拉起失败，可在相册里分享。', true);
+        }
+      });
+    }
     if (result.audioNote) showToast('音乐混流失败，已导出静音版本。', true);
   } catch (error) {
     const aborted = exportCancelled

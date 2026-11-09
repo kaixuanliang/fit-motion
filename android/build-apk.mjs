@@ -34,6 +34,11 @@ fs.mkdirSync(path.join(build, 'dex'), { recursive: true });
 fs.mkdirSync(path.join(android, 'assets', 'www'), { recursive: true });
 fs.copyFileSync(path.join(dist, 'index.html'), path.join(android, 'assets', 'www', 'index.html'));
 
+// 版本号单源化：package.json 的 version 是唯一来源。
+// versionCode 用日期流水（如 20261109），每次构建当天递增可见性一致。
+const pkgVersion = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version ?? '1.0.0';
+const todayStamp = Number(new Date().toISOString().slice(0, 10).replace(/-/g, ''));
+
 run(aapt2, ['compile', '--dir', path.join(android, 'res'), '-o', path.join(build, 'res.zip')], android);
 run(aapt2, [
   'link',
@@ -43,9 +48,9 @@ run(aapt2, [
   '-A', path.join(android, 'assets'),
   '--java', path.join(build, 'gen'),
   '--min-sdk-version', '29',
-  '--target-sdk-version', '30',
-  '--version-code', '1',
-  '--version-name', '1.0.0',
+  '--target-sdk-version', '34',
+  '--version-code', String(todayStamp),
+  '--version-name', pkgVersion,
   path.join(build, 'res.zip'),
 ], android);
 
@@ -53,7 +58,6 @@ const javaSources = [
   path.join(android, 'java', 'com', 'fitmotion', 'app', 'AudioMixer.java'),
   path.join(android, 'java', 'com', 'fitmotion', 'app', 'MainActivity.java'),
   path.join(android, 'java', 'com', 'fitmotion', 'app', 'NativeExporter.java'),
-  path.join(android, 'java', 'com', 'fitmotion', 'app', 'SurfaceExporter.java'),
   path.join(android, 'java', 'com', 'fitmotion', 'app', 'NativeScene.java'),
   path.join(android, 'java', 'com', 'fitmotion', 'app', 'NativePreview.java'),
   path.join(android, 'java', 'com', 'fitmotion', 'app', 'NativeVectorMap.java'),

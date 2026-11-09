@@ -35,6 +35,9 @@ export interface Activity {
   durationAvailable: boolean;
   durationSec: number;
   movingSec: number;
+  /** 总耗时（含停留，elapsed），创作页数据面板与「运动时长」并列显示 */
+  elapsedSec: number;
+  elapsedAvailable: boolean;
   distanceM: number;
   routeDistanceM: number;
   maxHeartRate?: number;
@@ -159,7 +162,10 @@ export function buildActivity(parsed: ParsedFit, fileName: string): Activity {
   if (records.length < 2) throw new Error('这个 FIT / GPX 文件中没有可用的 GPS 轨迹点');
 
   // Remove obvious GPS jumps where the point leaves and immediately returns.
+  // 再加一道全来源漂移过滤：与上一点的速度物理上不可能（>55 m/s ≈ 200 km/h，
+  // 华为导出实测出现过 lat=90 的极点甩飞）就丢弃该点，FIT/GPX/TCX/华为统一走。
   const cleaned: FitRecord[] = [];
+  let driftDropped = 0;
   for (let i = 0; i < records.length; i += 1) {
     const current = records[i];
     if (i > 0 && i < records.length - 1) {
@@ -170,6 +176,7 @@ export function buildActivity(parsed: ParsedFit, fileName: string): Activity {
       const direct = haversine(previous.lat!, previous.lon!, next.lat!, next.lon!);
       const dt = ((current.timestamp ?? 0) - (previous.timestamp ?? 0)) / 1000;
       if (dt > 0 && dPrev / dt > 55 && dNext > 180 && direct < Math.max(dPrev, dNext) * 0.45) {
+        driftDropped += 1;
         continue;
       }
     }
@@ -177,7 +184,19 @@ export function buildActivity(parsed: ParsedFit, fileName: string): Activity {
       && current.timestamp <= (cleaned[cleaned.length - 1].timestamp ?? 0)) {
       continue;
     }
+    const last = cleaned[cleaned.length - 1];
+    if (last?.lat != null && last.lon != null && last.timestamp != null
+      && current.lat != null && current.lon != null && current.timestamp != null) {
+      const dt = (current.timestamp - last.timestamp) / 1000;
+      if (dt > 0 && haversine(last.lat, last.lon, current.lat, current.lon) / dt > 55) {
+        driftDropped += 1;
+        continue;
+      }
+    }
     cleaned.push(current);
+  }
+  if (driftDropped > 0) {
+    console.info(`[fit-motion] 已剔除 ${driftDropped} 个 GPS 漂移点`);
   }
   if (cleaned.length < 2) throw new Error('这个 FIT / GPX 文件中没有足够的 GPS 轨迹点');
 
@@ -220,8 +239,23 @@ export function buildActivity(parsed: ParsedFit, fileName: string): Activity {
     ? session.timerTime
     : session.elapsedTime ?? recordDuration;
   const durationSec = durationAvailable ? Math.max(1, actualDuration) : Math.max(20, routeDistanceM / 3.6);
+  // 总耗时（elapsed）：含停车休息，列表与数据面板的「总时长」。
+  const elapsedSec = durationAvailable ? Math.max(1, session.elapsedTime ?? recordDuration) : durationSec;
+  const elapsedAvailable = durationAvailable && (session.elapsedTime ?? 0) > 0;
+  // 运动时长（moving time）：优先用码表原生的 timerTime；没有就用点间停留
+  // 检测估算 —— 平均速度必须是「距离 ÷ 运动时长」，停车时间摊进去会严重偏低
+  //（旧逻辑 timerTime 缺失时直接退回 elapsed，GPX/TCX/华为 JSON 全中招）。
+  const stopThreshold = STOP_SPEED_BY_KEY[sportKeyOf(session.sport)];
+  const estimatedMoving = timeAvailable && elapsedSec > 0
+    ? estimateMovingSec(points, elapsedSec, stopThreshold)
+    : null;
   const movingSec = durationAvailable
-    ? Math.max(1, session.timerTime ?? actualDuration)
+    ? Math.max(1, Math.min(
+        elapsedSec,
+        (session.timerTime && session.timerTime > 0 ? session.timerTime : null)
+          ?? estimatedMoving
+          ?? actualDuration,
+      ))
     : durationSec;
   const distanceM = session.distance && session.distance > 0 ? session.distance : routeDistanceM;
   const scale = distanceM / routeDistanceM;
@@ -340,6 +374,8 @@ export function buildActivity(parsed: ParsedFit, fileName: string): Activity {
     durationAvailable,
     durationSec,
     movingSec,
+    elapsedSec,
+    elapsedAvailable,
     distanceM,
     routeDistanceM,
     maxHeartRate,
@@ -485,6 +521,37 @@ export function formatDateParts(timestamp: number): { date: string; time: string
     time: `${get('hour')}:${get('minute')}`,
     weekday,
   };
+}
+
+/** 停留判定的分段速度阈值（m/s）：低于它的时间段不算「运动中」。 */
+const STOP_SPEED_BY_KEY: Record<Activity['sportKey'], number> = {
+  ride: 0.7,
+  run: 0.4,
+  hike: 0.35,
+  swim: 0.3,
+  other: 0.5,
+};
+
+/**
+ * 点间停留检测估算运动时长：相邻两点瞬时速度 ≥ 阈值的时间才累计。
+ * GPS 停车抖动一般每秒 <0.5 m，0.4~0.7 m/s 的阈值能稳定滤掉。
+ */
+function estimateMovingSec(points: RoutePoint[], elapsedSec: number, stopSpeed: number): number {
+  let moving = 0;
+  for (let i = 1; i < points.length; i += 1) {
+    const dt = (points[i].t - points[i - 1].t) / 1000;
+    if (dt <= 0 || dt > 120) continue;
+    const dd = points[i].distance - points[i - 1].distance;
+    if (dd / dt >= stopSpeed) moving += dt;
+  }
+  // 尺度校准：点间累计距离被全程距离缩放覆盖过，但停留比例不变；
+  // 估算值封顶在总耗时内，低于 1 秒视为估算失败。
+  const scaled = elapsedSec > 0 ? moving : 0;
+  return scaled >= 1 ? scaled : elapsedSec;
+}
+
+function sportKeyOf(sport: number | undefined): Activity['sportKey'] {
+  return SPORTS[sport ?? -1]?.key ?? 'other';
 }
 
 function buildSplits(points: RoutePoint[], startTime: number, totalDistance: number): Split[] {

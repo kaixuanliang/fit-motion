@@ -162,21 +162,21 @@
 
 从装机的第一次点击到每一处验证点，见 [`docs/使用与验证报告.html`](docs/使用与验证报告.html)（浏览器打开，含截图与勾选清单）。里面写了 GitHub / Gitee Token 的获取步骤和每步的预期结果。
 
-## 快速开始（Web）
+## 快速开始
 
 ```bash
 npm install
 npm run build
 ```
 
-构建产物是单文件 `dist/index.html`，可以直接双击打开，也可以：
+构建产物是单文件 `dist/index.html`，主要供 Android APK 使用（打包时复制进 assets）。开发调试可以起本地服务：
 
 ```bash
 python -m http.server 5180 --directory dist
 # http://127.0.0.1:5180/
 ```
 
-`?demo=1` 直接打开示例；`?demo=1&t=18.8&still=1` 打开第 18.8 秒的静帧（包含最快速度气泡与右侧抽屉），便于检查。可追加 `&theme=night` 或 `&theme=tech` 切换色彩模式。
+`?demo=1` 直接打开示例；`?demo=1&t=18.8` 打开第 18.8 秒的预览帧（包含最快速度气泡与右侧抽屉），便于检查。可追加 `&theme=night` 或 `&theme=tech` 切换色彩模式。
 
 开发模式：
 

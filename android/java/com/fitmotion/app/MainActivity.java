@@ -55,7 +55,6 @@ public class MainActivity extends Activity {
     private String pendingSaveName;
     private String pendingSaveMime;
     private NativeFrameServer nativeFrameServer;
-    private SurfaceExporter surfaceExporter;
     private View customView;
     private WebChromeClient.CustomViewCallback customViewCallback;
     private FrameLayout fullscreenContainer;
@@ -449,10 +448,6 @@ public class MainActivity extends Activity {
             nativeFrameServer.stop();
             nativeFrameServer = null;
         }
-        if (surfaceExporter != null) {
-            surfaceExporter.abort();
-            surfaceExporter = null;
-        }
         if (webView != null) {
             webView.removeJavascriptInterface("FitMotionAndroid");
             webView.loadUrl("about:blank");
@@ -499,56 +494,6 @@ public class MainActivity extends Activity {
         public String nativeExportUrl() {
             if (nativeFrameServer == null) nativeFrameServer = new NativeFrameServer(MainActivity.this);
             return nativeFrameServer.start();
-        }
-
-        @JavascriptInterface
-        public boolean beginSurfaceExport(int width, int height, int bitrate, int fps,
-                                          int left, int top, int right, int bottom) {
-            try {
-                if (surfaceExporter != null) surfaceExporter.abort();
-                surfaceExporter = new SurfaceExporter(MainActivity.this);
-                return surfaceExporter.start(width, height, bitrate, fps, left, top, right, bottom);
-            } catch (Throwable error) {
-                return false;
-            }
-        }
-
-        @JavascriptInterface
-        public boolean copySurfaceFrame(int left, int top, int right, int bottom, int index) {
-            SurfaceExporter exporter = surfaceExporter;
-            if (exporter == null) return false;
-            try {
-                return exporter.copyFrame(left, top, right, bottom, index);
-            } catch (Throwable error) {
-                return false;
-            }
-        }
-
-        @JavascriptInterface
-        public String finishSurfaceExport() {
-            SurfaceExporter exporter = surfaceExporter;
-            if (exporter == null) return "";
-            surfaceExporter = null;
-            try {
-                return exporter.finish();
-            } catch (Throwable error) {
-                return "";
-            }
-        }
-
-        @JavascriptInterface
-        public void cancelSurfaceExport() {
-            SurfaceExporter exporter = surfaceExporter;
-            surfaceExporter = null;
-            if (exporter != null) {
-                try { exporter.abort(); } catch (Throwable ignored) { }
-            }
-        }
-
-        @JavascriptInterface
-        public String lastSurfaceError() {
-            SurfaceExporter exporter = surfaceExporter;
-            return exporter == null ? "" : exporter.lastError();
         }
 
         @JavascriptInterface
@@ -636,6 +581,58 @@ public class MainActivity extends Activity {
         public void cancelSave() {
             closeStream();
             cleanup();
+        }
+
+        /** 分享 MediaStore 里已保存的内容（原生导出直接返回的 content uri）。 */
+        @JavascriptInterface
+        public boolean shareUri(String uri, String mime) {
+            try {
+                if (uri == null || uri.length() == 0) return false;
+                Intent send = new Intent(Intent.ACTION_SEND);
+                send.setType(mime == null || mime.length() == 0 ? "video/mp4" : mime);
+                send.putExtra(Intent.EXTRA_STREAM, Uri.parse(uri));
+                send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                startActivity(Intent.createChooser(send, "分享"));
+                return true;
+            } catch (Throwable error) {
+                return false;
+            }
+        }
+
+        /**
+         * 系统分享面板：把最近一次导出的文件交给微信 / 抖音等。
+         * 走 ShareProvider 的 content:// URI（targetSdk 24+ 禁止 file:// 跨应用）。
+         */
+        @JavascriptInterface
+        public boolean shareExport(String name, String mime) {
+            try {
+                File source = cacheFile != null && cacheFile.exists()
+                        ? cacheFile : new File(getCacheDir(), "fit-motion-export.tmp");
+                if (!source.exists()) return false;
+                File external = getExternalFilesDir(null);
+                if (external == null) return false;
+                File dir = new File(external, "share");
+                if (!dir.exists()) dir.mkdirs();
+                String safe = sanitize(name == null || name.length() == 0 ? "fit-motion.mp4" : name);
+                File target = new File(dir, safe);
+                java.io.FileInputStream in = new java.io.FileInputStream(source);
+                java.io.FileOutputStream out = new java.io.FileOutputStream(target);
+                byte[] buffer = new byte[65536];
+                int read;
+                while ((read = in.read(buffer)) > 0) out.write(buffer, 0, read);
+                in.close();
+                out.close();
+                Uri uri = Uri.parse("content://com.fitmotion.app.share/share/" + Uri.encode(safe));
+                Intent send = new Intent(Intent.ACTION_SEND);
+                send.setType(mime == null || mime.length() == 0 ? "video/mp4" : mime);
+                send.putExtra(Intent.EXTRA_STREAM, uri);
+                send.putExtra(Intent.EXTRA_TITLE, safe);
+                send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                startActivity(Intent.createChooser(send, "分享"));
+                return true;
+            } catch (Throwable error) {
+                return false;
+            }
         }
 
         private boolean transcodeToMp4(File input, File output) {

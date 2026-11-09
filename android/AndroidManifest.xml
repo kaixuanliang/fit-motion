@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.fitmotion.app"
-    android:versionCode="1"
+    android:versionCode="20261109"
     android:versionName="1.0.0">
+    <!-- versionCode/versionName 由 android/build-apk.mjs 从 package.json 注入，
+         这里只是占位；aapt2 link 会用命令行参数覆盖。 -->
 
-    <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="30" />
+    <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="34" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -37,5 +39,10 @@
             android:name=".ExportService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <provider
+            android:name=".ShareProvider"
+            android:authorities="com.fitmotion.app.share"
+            android:exported="false"
+            android:grantUriPermissions="true" />
     </application>
 </manifest>

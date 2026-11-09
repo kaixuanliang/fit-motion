@@ -9,6 +9,7 @@ import { hashBytes, motionFp, sameMotion, START_WINDOW_MS } from './fingerprint'
 import { thumbPath } from './thumb';
 import type {
   ActivityMeta,
+  BackupProviderId,
   ImportResult,
   LibraryStats,
   ListPage,
@@ -202,14 +203,85 @@ export async function findNearby(start: number): Promise<ActivityMeta[]> {
   return rows.filter((row) => !row.deleted);
 }
 
+/**
+ * 数据完整度评分：重复导入时对比新旧两份数据谁更全。
+ * 心率权重最高（华为 JSON 有、码表 FIT 常没有），其余等权。
+ */
+function activityScore(a: Activity): number {
+  let score = 0;
+  if (a.maxHeartRate != null || a.avgHeartRate != null) score += 2;
+  if (a.maxAltitude != null) score += 1;
+  if (a.maxSpeed > 0) score += 1;
+  if (a.calories != null) score += 1;
+  const km = a.distanceM / 1000;
+  if (km > 0 && a.points.length / km >= 5) score += 1;
+  return score;
+}
+
+function metaScore(m: ActivityMeta): number {
+  let score = 0;
+  if (m.maxHr != null || m.avgHr != null) score += 2;
+  if (m.maxAlt != null) score += 1;
+  if (m.maxSpeed > 0) score += 1;
+  if (m.calories != null) score += 1;
+  const km = m.distance / 1000;
+  if (km > 0 && m.points / km >= 5) score += 1;
+  return score;
+}
+
+/** 新数据比既有记录更完整（严格更高）才算值得替换。 */
+function worthReplacing(activity: Activity, existing: ActivityMeta): boolean {
+  return activityScore(activity) > metaScore(existing);
+}
+
+/**
+ * 用新解析的数据替换既有记录：沿用 id（云端 tracks/<id>.fmt 直接覆盖，
+ * 备份 commit 不膨胀），保留用户改过的名字与备份状态；meta.updated 刷新后
+ * 对账同步会把新版本推上云端。
+ */
+async function replaceRecord(activity: Activity, existing: ActivityMeta, input: SaveInput, fileHash: string): Promise<ImportResult> {
+  const meta = metaOf(activity, {
+    id: existing.id,
+    fileHash,
+    src: input.src,
+    fileName: input.fileName,
+    size: input.bytes.byteLength,
+    name: existing.name,
+  });
+  // 保留备份状态与时间戳语义：added 是首次入库时间，updated 是本次替换时间
+  meta.added = existing.added;
+  meta.opened = existing.opened;
+  meta.mergedFrom = existing.mergedFrom ?? input.mergedFrom;
+  const track = packTrack(activity, existing.id, sessionOf(activity));
+  await tx([STORE.activities, STORE.tracks, STORE.files], 'readwrite', (t) => {
+    t.objectStore(STORE.activities).put(meta);
+    t.objectStore(STORE.tracks).put(track);
+    if (input.keepFile) {
+      const file: StoredFile = {
+        id: existing.id,
+        name: input.fileName,
+        type: input.fileName.split('.').pop() ?? '',
+        size: input.bytes.byteLength,
+        blob: new Blob([input.bytes]),
+        added: existing.added,
+      };
+      t.objectStore(STORE.files).put(file);
+    }
+  });
+  invalidate();
+  const gained = activityScore(activity) - metaScore(existing);
+  return {
+    status: 'replaced',
+    name: meta.name,
+    id: existing.id,
+    existing: existing.id,
+    message: `已用更完整的数据替换「${meta.name}」（新增 ${gained} 项信息）`,
+  };
+}
+
 export async function saveParsed(input: SaveInput): Promise<ImportResult> {
   const name = input.name ?? input.fileName;
   const fileHash = input.hashOverride ?? (await hashBytes(input.bytes));
-
-  const sameFile = await findByHash(fileHash);
-  if (sameFile) {
-    return { status: 'duplicate-file', name, id: sameFile.id, existing: sameFile.id, message: '同一个文件之前已导入' };
-  }
 
   let activity: Activity;
   try {
@@ -218,16 +290,27 @@ export async function saveParsed(input: SaveInput): Promise<ImportResult> {
     return { status: 'no-gps', name, message: error instanceof Error ? error.message : '没有可用的轨迹点' };
   }
 
+  const sameFile = await findByHash(fileHash);
+  if (sameFile) {
+    if (worthReplacing(activity, sameFile)) {
+      return replaceRecord(activity, sameFile, input, fileHash);
+    }
+    return { status: 'duplicate-file', name, id: sameFile.id, existing: sameFile.id, message: '同一个文件之前已导入' };
+  }
+
   if (!input.skipDedupe) {
     const nearby = await findNearby(activity.startTime);
     const duplicate = nearby.find((row) => sameMotion(row.fp, motionFp(activity.startTime, activity.durationSec, activity.distanceM)));
     if (duplicate) {
+      if (worthReplacing(activity, duplicate)) {
+        return replaceRecord(activity, duplicate, input, fileHash);
+      }
       return {
         status: 'duplicate-motion',
         name,
         id: duplicate.id,
         existing: duplicate.id,
-        message: `与「${duplicate.name}」是同一趟运动`,
+        message: `与「${duplicate.name}」是同一趟运动，且已有数据更完整`,
       };
     }
   }
@@ -267,12 +350,19 @@ export async function listPage(query: ListQuery): Promise<ListPage> {
   const limit = query.limit ?? PAGE_SIZE;
   const year = query.year ?? 'all';
   const src = query.src ?? 'all';
+  // GPX 分类把华为 JSON 归进来（同类点串数据），卡片上用「华为」徽标区分
+  const srcMatch = (row: ActivityMeta): boolean => src === 'all'
+    || row.src === src
+    || (src === 'gpx' && row.src === 'huawei');
+  const asc = query.order === 'asc';
 
   let bound: IDBKeyRange | null = null;
-  if (query.before != null) {
-    bound = IDBKeyRange.upperBound(query.before, true);
-  } else if (year !== 'all') {
-    bound = IDBKeyRange.bound(Date.UTC(year, 0, 1), Date.UTC(year + 1, 0, 1), false, true);
+  if (asc) {
+    if (query.after != null) bound = IDBKeyRange.lowerBound(query.after, true);
+    else if (year !== 'all') bound = IDBKeyRange.bound(Date.UTC(year, 0, 1), Date.UTC(year + 1, 0, 1), false, true);
+  } else {
+    if (query.before != null) bound = IDBKeyRange.upperBound(query.before, true);
+    else if (year !== 'all') bound = IDBKeyRange.bound(Date.UTC(year, 0, 1), Date.UTC(year + 1, 0, 1), false, true);
   }
 
   const items: ActivityMeta[] = [];
@@ -280,7 +370,7 @@ export async function listPage(query: ListQuery): Promise<ListPage> {
   let exhausted = true;
 
   await tx(STORE.activities, 'readonly', (t) => new Promise<void>((resolve, reject) => {
-    const request = t.objectStore(STORE.activities).index('by_start').openCursor(bound, 'prev');
+    const request = t.objectStore(STORE.activities).index('by_start').openCursor(bound, asc ? 'next' : 'prev');
     request.onerror = () => reject(request.error ?? new Error('读取记录失败'));
     request.onsuccess = () => {
       const cursor = request.result;
@@ -290,7 +380,7 @@ export async function listPage(query: ListQuery): Promise<ListPage> {
       }
       const meta = cursor.value as ActivityMeta;
       const metaYear = new Date(meta.start).getFullYear();
-      if (meta.deleted || (src !== 'all' && meta.src !== src) || (year !== 'all' && metaYear !== year)) {
+      if (meta.deleted || !srcMatch(meta) || (year !== 'all' && metaYear !== year)) {
         cursor.continue();
         return;
       }
@@ -339,12 +429,14 @@ export async function libraryStats(): Promise<Stats> {
     if (!first || row.start < first) first = row.start;
     if (row.start > last) last = row.start;
     const year = String(new Date(row.start).getFullYear());
+    // 展示分组：华为 JSON 归入 GPX 组（列表卡片另有「华为」徽标）
+    const group = row.src === 'huawei' ? 'gpx' : row.src;
     byYear[year] = (byYear[year] ?? 0) + 1;
-    bySrc[row.src] = (bySrc[row.src] ?? 0) + 1;
-    const yk = `${year}|${row.src}`;
+    bySrc[group] = (bySrc[group] ?? 0) + 1;
+    const yk = `${year}|${group}`;
     byBoth[yk] = (byBoth[yk] ?? 0) + 1;
     byBoth[`${year}|all`] = (byBoth[`${year}|all`] ?? 0) + 1;
-    byBoth[`all|${row.src}`] = (byBoth[`all|${row.src}`] ?? 0) + 1;
+    byBoth[`all|${group}`] = (byBoth[`all|${group}`] ?? 0) + 1;
     byBoth['all|all'] = (byBoth['all|all'] ?? 0) + 1;
   }
   const value = { count, distanceM, durationSec, first, last, byYear, bySrc, byBoth };
@@ -394,7 +486,14 @@ export async function loadActivity(id: string): Promise<Activity> {
     sessions: [track.session],
     laps: [],
   };
-  return buildActivity(parsed, meta.fileName);
+  const activity = buildActivity(parsed, meta.fileName);
+  // 旧口径迁移：均速曾是「距离÷总耗时」，打开记录时用新口径（距离÷运动时长）
+  // 重算并回写 meta，列表页逐渐自愈。误差 <1% 视为一致，不动。
+  if (Math.abs(activity.avgSpeed - meta.avgSpeed) > Math.max(0.05, meta.avgSpeed * 0.01)) {
+    meta.avgSpeed = activity.avgSpeed;
+    await putMeta(meta);
+  }
+  return activity;
 }
 
 export async function loadFileBlob(id: string): Promise<Blob | null> {
@@ -595,7 +694,7 @@ export async function deleteTrack(id: string): Promise<void> {
  *  homeKey：这一版轨迹写进了该端的哪个仓库（owner/repo），删除和回源按它定位。 */
 export async function markBacked(
   id: string,
-  provider: 'github' | 'gitee',
+  provider: BackupProviderId,
   version: number,
   homeKey = '',
 ): Promise<ActivityMeta | null> {
@@ -621,7 +720,7 @@ export async function touchOpened(id: string): Promise<void> {
  * 还需要备份的记录数：按「绑定的端」逐个比对 where 里的时间戳。
  * 比单独维护一个队列更可靠 —— 队列会丢，元数据不会。
  */
-export async function unsyncedMeta(providers: Array<'github' | 'gitee'>): Promise<ActivityMeta[]> {
+export async function unsyncedMeta(providers: BackupProviderId[]): Promise<ActivityMeta[]> {
   if (!providers.length) return [];
   const rows = await allMeta();
   return rows.filter((row) => {

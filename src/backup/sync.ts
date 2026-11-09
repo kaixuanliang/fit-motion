@@ -37,6 +37,7 @@ import {
   type SyncAdapter,
 } from './adapter';
 import { packTrack, unpackTrack } from './codec';
+import { decryptText, encryptText, isEncrypted } from './crypto';
 
 export const MANIFEST_PATH = 'fitmotion/manifest.json';
 export const REPO_PREFIX = 'fitmotion';
@@ -44,9 +45,54 @@ export const REPO_PREFIX = 'fitmotion';
 const CONFIG_KEY: Record<ProviderId, string> = {
   gitee: 'backup.gitee',
   github: 'backup.github',
+  webdav: 'backup.webdav',
+  baidu: 'backup.baidu',
 };
 
-const ALL_PROVIDERS: ProviderId[] = ['gitee', 'github'];
+const ALL_PROVIDERS: ProviderId[] = ['gitee', 'github', 'webdav', 'baidu'];
+
+/* ── 端到端加密：远端只存密文（清单明文，轨迹密文） ── */
+
+let sessionPassword = '';
+
+/** 备份密码只在本次会话内存里，App 重启后需重新输入。 */
+export function setSessionPassword(password: string): void {
+  sessionPassword = password;
+}
+
+export function hasSessionPassword(): boolean {
+  return sessionPassword.length > 0;
+}
+
+export interface CryptoConfig {
+  enabled: boolean;
+  salt: string;
+  iterations: number;
+}
+
+export async function readCryptoConfig(): Promise<CryptoConfig | null> {
+  return getSetting<CryptoConfig | null>('backup.crypto', null);
+}
+
+/** 轨迹文件上传前加密（清单保持明文：跨设备列表恢复依赖它）。 */
+async function putTrackFile(adapter: SyncAdapter, path: string, text: string, message: string): Promise<void> {
+  const cfg = await readCryptoConfig();
+  if (cfg?.enabled && sessionPassword) {
+    text = await encryptText(text, sessionPassword, cfg);
+  }
+  await adapter.put(path, text, message);
+}
+
+/** 轨迹文件下载后解密；没开加密或密码不对会抛出明确错误。 */
+async function getTrackFile(adapter: SyncAdapter, path: string): Promise<{ sha: string; text: string } | null> {
+  const file = await adapter.get(path);
+  if (!file || !isEncrypted(file.text)) return file;
+  const cfg = await readCryptoConfig();
+  if (!cfg?.enabled || !sessionPassword) {
+    throw new Error('云端轨迹已加密：请先在备份页开启加密备份并输入备份密码，再同步');
+  }
+  return { sha: file.sha, text: await decryptText(file.text, sessionPassword, cfg) };
+}
 
 /** 每端最多绑几个仓库（Gitee 总量 5GB ÷ 500MB，GitHub 更多只是没意义了） */
 export const MAX_TARGETS = 5;
@@ -489,7 +535,7 @@ async function runSync(onProgress?: (progress: SyncProgress) => void): Promise<S
           continue;
         }
         const packed = await packTrack(track);
-        await workAdapter.put(trackPath(meta.id), packed.text, `轨迹 ${meta.name}`);
+        await putTrackFile(workAdapter, trackPath(meta.id), packed.text, `轨迹 ${meta.name}`);
         await markBacked(meta.id, id, meta.updated, repoKey(all[work]));
         pushed += 1;
         uploadedBytes += packed.text.length;
@@ -578,7 +624,7 @@ export async function downloadTrack(id: string): Promise<StoredTrack | null> {
     const indexes = [homeIdx, ...targets.targets.map((_, i) => i).filter((i) => i !== homeIdx)];
     for (const idx of indexes) {
       try {
-        const file = await adapterFor(targets.targets[idx], pid).get(trackPath(id));
+        const file = await getTrackFile(adapterFor(targets.targets[idx], pid), trackPath(id));
         if (!file) continue;
         const track = await unpackTrack(file.text, id);
         await putStoredTrack(track);

@@ -12,6 +12,8 @@ export interface DialogField {
   value?: string;
   placeholder?: string;
   hint?: string;
+  /** password 渲染成带遮罩的 text 输入框：type=password 会唤起 EMUI 安全键盘，
+   *  长按粘贴被禁用；遮罩用 CSS 实现，附显示/隐藏切换。 */
   type?: 'text' | 'password';
   inputMode?: 'text' | 'numeric' | 'url';
   mono?: boolean;
@@ -79,12 +81,22 @@ function mount(html: string): { root: HTMLElement; close: () => void } {
 export function showForm(options: FormOptions): Promise<Record<string, string> | null> {
   const fields = options.fields.map((field) => {
     const value = escapeHtml(field.value ?? '');
-    const input = field.type === 'password'
-      ? `<input class="fm-input fm-mono" type="password" data-key="${field.key}" value="${value}"
-           placeholder="${escapeHtml(field.placeholder ?? '')}" spellcheck="false" autocapitalize="off" autocomplete="off">`
-      : `<input class="fm-input${field.mono ? ' fm-mono' : ''}" type="text" data-key="${field.key}" value="${value}"
+    if (field.type === 'password') {
+      // text + CSS 遮罩（-webkit-text-security）：不触发华为安全键盘，长按粘贴可用
+      return `<label class="fm-field">
+        <span class="fm-field-label">${escapeHtml(field.label)}</span>
+        <span class="fm-secret">
+          <input class="fm-input fm-mono fm-secret-input fm-masked" type="text" data-key="${field.key}" value="${value}"
+               placeholder="${escapeHtml(field.placeholder ?? '')}" inputmode="url" spellcheck="false"
+               autocapitalize="off" autocomplete="off" autocorrect="off">
+          <button class="fm-secret-toggle" type="button" data-secret-toggle>显示</button>
+        </span>
+        ${field.hint ? `<span class="fm-field-hint">${escapeHtml(field.hint)}</span>` : ''}
+      </label>`;
+    }
+    const input = `<input class="fm-input${field.mono ? ' fm-mono' : ''}" type="text" data-key="${field.key}" value="${value}"
            placeholder="${escapeHtml(field.placeholder ?? '')}" inputmode="${field.inputMode ?? 'text'}"
-           spellcheck="false" autocapitalize="off" autocomplete="off">`;
+           spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off">`;
     return `<label class="fm-field">
       <span class="fm-field-label">${escapeHtml(field.label)}</span>
       ${input}
@@ -123,6 +135,17 @@ export function showForm(options: FormOptions): Promise<Record<string, string> |
   };
 
   inputs.forEach((input) => input.addEventListener('input', () => { errorBox.hidden = true; }));
+
+  // 密码遮罩切换：显示/隐藏 token，避免旁边有人时泄露
+  form.querySelectorAll<HTMLButtonElement>('[data-secret-toggle]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const field = button.closest('.fm-field') as HTMLElement | null;
+      const input = field?.querySelector<HTMLInputElement>('.fm-secret-input');
+      if (!input) return;
+      const masked = input.classList.toggle('fm-masked');
+      button.textContent = masked ? '显示' : '隐藏';
+    });
+  });
 
   return new Promise((resolve) => {
     form.addEventListener('submit', (event) => {

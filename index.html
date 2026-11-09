@@ -41,7 +41,17 @@
             <h1>记录</h1>
             <span class="sum" id="records-sum">—</span>
           </div>
-          <div class="chips" id="chips"></div>
+          <div class="cat-bar" id="cat-bar">
+            <div class="cat-fixed" id="cat-formats"></div>
+            <div class="cat-scroll" id="cat-years"></div>
+          </div>
+          <div class="batch-bar" id="batch-bar" hidden>
+            <button class="link" id="batch-cancel" type="button">取消</button>
+            <span class="batch-count" id="batch-count">已选 0 条</span>
+            <span class="batch-spacer"></span>
+            <button class="link" id="batch-all" type="button">全选</button>
+            <button class="link danger" id="batch-delete" type="button">删除</button>
+          </div>
           <div class="record-list" id="record-list"></div>
           <div class="list-foot" id="list-foot" hidden>
             <button class="load-more" id="load-more" type="button">加载更多</button>
@@ -135,6 +145,22 @@
             <div class="prov-foot"><span id="github-usage">0 MB / 1 GB</span><button class="link" data-bind-add="github" type="button" hidden>+ 仓库</button><button class="link" data-bind="github" type="button">绑定</button></div>
           </div>
 
+          <div class="card prov" data-provider="webdav">
+            <div class="prov-head"><b><i class="dot" id="webdav-dot"></i>WebDAV</b><i class="badge" id="webdav-badge">未绑定</i></div>
+            <p class="prov-note">坚果云 / 群晖 / Alist 通用协议，个人使用零开发者申请</p>
+            <div class="bar"><i id="webdav-bar" style="width:0%"></i></div>
+            <div class="target-list" id="webdav-targets" hidden></div>
+            <div class="prov-foot"><span id="webdav-usage">0 MB / 1 GB</span><button class="link" data-bind="webdav" type="button">绑定</button></div>
+          </div>
+
+          <div class="card prov" data-provider="baidu">
+            <div class="prov-head"><b><i class="dot" id="baidu-dot"></i>百度网盘</b><i class="badge" id="baidu-badge">未绑定</i></div>
+            <p class="prov-note">超大空间，多年数据备份首选（需开放平台个人开发者授权）</p>
+            <div class="bar"><i id="baidu-bar" style="width:0%"></i></div>
+            <div class="target-list" id="baidu-targets" hidden></div>
+            <div class="prov-foot"><span id="baidu-usage">0 MB / 2 TB</span><button class="link" data-bind="baidu" type="button">绑定</button></div>
+          </div>
+
           <div class="card row-card">
             <div><b id="pending-count">0 条待备份</b><span id="pending-note">同步按时间戳对账，重复点十次等于点一次</span></div>
             <button class="btn primary" id="sync-now" type="button" disabled>立即同步</button>
@@ -166,6 +192,8 @@
             <div class="kv"><span>平均每条</span><b id="budget-avg">—</b></div>
             <div class="kv"><span>Gitee 余量</span><b id="budget-gitee">—</b></div>
             <div class="kv"><span>GitHub 余量</span><b id="budget-github">—</b></div>
+            <div class="kv"><span>WebDAV 余量</span><b id="budget-webdav">—</b></div>
+            <div class="kv"><span>百度网盘余量</span><b id="budget-baidu">—</b></div>
             <p class="card-note">按现有记录的平均体积折算。删除只影响当前版本，Git 历史里的旧文件仍占配额。</p>
           </div>
 
@@ -173,6 +201,8 @@
             <p class="card-title">安全</p>
             <div class="kv"><span>Token</span><b>只存本机，不随云同步</b></div>
             <div class="kv"><span>权限</span><b>仓库 Contents 读写，别给全库 Token</b></div>
+            <div class="kv"><span>加密备份</span><b id="crypto-state">未开启</b></div>
+            <button class="btn ghost wide" id="crypto-toggle" type="button">开启加密备份</button>
             <button class="btn ghost wide" id="export-pack" type="button">导出备份清单（JSON）</button>
           </div>
         </section>
@@ -280,6 +310,7 @@
           <div class="detail-grid">
             <div><span>平均心率</span><b id="avg-hr">--</b></div>
             <div><span>平均速度</span><b id="avg-speed">--</b></div>
+            <div><span>总时长</span><b id="total-elapsed">--</b></div>
             <div><span>最高海拔</span><b id="max-altitude">--</b></div>
             <div><span>消耗热量</span><b id="calories">--</b></div>
           </div>
@@ -303,23 +334,18 @@
           <p class="cta-note" id="export-help">1080 × 1920 · 30FPS · MP4<br />导出完成自动存入手机相册</p>
 
           <div class="sub-actions">
-            <button class="sub" id="native-preview-btn" type="button" hidden>静帧预览</button>
             <button class="sub" id="export-track-gpx" type="button">导出 GPX</button>
             <button class="sub" id="export-track-tcx" type="button">导出 TCX</button>
-            <button class="sub" id="stats-image-btn" type="button">数据长图</button>
-            <button class="sub" id="clear-cache" type="button">清地图缓存</button>
+            <button class="sub" id="stats-image-btn" type="button">导出数据长图</button>
           </div>
-
-          <details class="split-panel">
-            <summary>分段数据 <span id="split-caption">每 1 KM</span></summary>
-            <div class="splits" id="splits"></div>
-          </details>
 
           <div class="file-strip">
             <i class="tag" id="file-badge">FIT</i>
             <span id="file-name">city_ride.fit</span>
             <span id="file-meta">3,846 个轨迹点</span>
           </div>
+
+          <button class="sub clear-cache-btn" id="clear-cache" type="button">清除地图缓存</button>
         </section>
 
       </main>

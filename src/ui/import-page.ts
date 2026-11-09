@@ -19,6 +19,7 @@ const $ = <T extends HTMLElement>(id: string): T | null => document.getElementBy
 
 function mark(status: ImportResult['status']): string {
   if (status === 'added') return '<span class="st ok">新增</span>';
+  if (status === 'replaced') return '<span class="st ok">已替换</span>';
   if (status === 'duplicate-file' || status === 'duplicate-motion') return '<span class="st dup">重复跳过</span>';
   if (status === 'too-short') return '<span class="st short">低于门槛</span>';
   return '<span class="st bad">跳过</span>';
@@ -29,13 +30,15 @@ function rowHtml(result: ImportResult): string {
     ? `重复 · ${result.message ?? ''}`
     : result.status === 'duplicate-file'
       ? '同一文件之前已导入'
-      : result.status === 'no-gps'
-        ? result.message ?? '没有可用的 GPS 点'
-        : result.status === 'error'
-          ? result.message ?? '导入失败'
-          : result.status === 'too-short'
-            ? result.message ?? '距离低于门槛'
-            : '';
+      : result.status === 'replaced'
+        ? result.message ?? '已用更完整的数据替换'
+        : result.status === 'no-gps'
+          ? result.message ?? '没有可用的 GPS 点'
+          : result.status === 'error'
+            ? result.message ?? '导入失败'
+            : result.status === 'too-short'
+              ? result.message ?? '距离低于门槛'
+              : '';
   return `<div class="recent-row">
     <span class="nm">${result.name}</span>
     ${note ? `<span class="st" style="color:var(--dim);font-size:9px;max-width:52%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${note}</span>` : ''}
@@ -45,11 +48,13 @@ function rowHtml(result: ImportResult): string {
 
 function reportText(outcome: ImportOutcome): string {
   const summary = [`新增 ${outcome.added} 条 · 重复 ${outcome.duplicated} 条`];
+  const replaced = outcome.results.filter((r) => r.status === 'replaced').length;
+  if (replaced > 0) summary.push(`替换 ${replaced} 条`);
   if (outcome.filtered > 0) summary.push(`低于距离 ${outcome.filtered} 条`);
   summary.push(`失败 ${outcome.failed} 条`);
   const lines = [summary.join(' · '), ''];
   for (const result of outcome.results.slice(0, 40)) {
-    const prefix = result.status === 'added' ? '✓' : result.status === 'error' ? '✕' : '·';
+    const prefix = result.status === 'added' || result.status === 'replaced' ? '✓' : result.status === 'error' ? '✕' : '·';
     const note = result.message ? `  — ${result.message}` : '';
     lines.push(`${prefix} ${result.name}${note}`);
   }

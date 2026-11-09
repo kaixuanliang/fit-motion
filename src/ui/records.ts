@@ -34,13 +34,20 @@ type OpenHandler = (meta: ActivityMeta) => void;
 interface State {
   year: number | 'all';
   src: SourceKind | 'all';
+  order: 'asc' | 'desc';
   items: ActivityMeta[];
   next: number | null;
   total: number;
   loading: boolean;
+  /** 批量选择模式 */
+  selecting: boolean;
+  selected: Set<string>;
 }
 
-const state: State = { year: 'all', src: 'all', items: [], next: null, total: 0, loading: false };
+const state: State = { year: 'all', src: 'all', order: 'desc', items: [], next: null, total: 0, loading: false, selecting: false, selected: new Set() };
+
+/** 年份条横向滚动位置，重绘后恢复。 */
+let yearsScrollLeft = 0;
 
 let openHandler: OpenHandler = () => {};
 
@@ -76,7 +83,8 @@ function cardHtml(meta: ActivityMeta): string {
     ? `合并${meta.mergedFrom?.length ? ` ${meta.mergedFrom.length} 段` : ''}`
     : SOURCE_LABEL[meta.src];
   const badge = meta.backup === 2 ? ['both', '双端'] : meta.backup === 1 ? ['one', '已备份'] : ['wait', '待备份'];
-  return `<div class="rec" data-id="${meta.id}" role="button" tabindex="0">
+  const selected = state.selecting && state.selected.has(meta.id);
+  return `<div class="rec${selected ? ' sel' : ''}" data-id="${meta.id}" role="button" tabindex="0">
     <span class="thumb"><svg viewBox="0 0 44 44"><path d="${meta.thumb}" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" opacity="0.92"/></svg></span>
     <span class="body">
       <span class="top"><b>${title}</b><i class="tag ${tagClass}">${tagText}</i></span>
@@ -90,23 +98,46 @@ function cardHtml(meta: ActivityMeta): string {
   </div>`;
 }
 
-function renderChips(stats: { byYear: Record<string, number>; bySrc: Record<string, number>; byBoth: Record<string, number> }): void {
-  const chips = $<HTMLDivElement>('chips');
-  if (!chips) return;
-  const entries: Array<[string, string]> = [];
-  const all = stats.byBoth['all|all'] ?? 0;
-  entries.push(['all|all', `全部 ${all}`]);
-  const years = Object.keys(stats.byYear).sort().reverse();
-  for (const year of years) entries.push([`${year}|all`, year]);
-  for (const src of ['huawei', 'fit', 'gpx', 'tcx', 'merged'] as SourceKind[]) {
-    const count = stats.bySrc[src] ?? 0;
-    if (count > 0) entries.push([`all|${src}`, SOURCE_LABEL[src]]);
-  }
-  chips.innerHTML = entries.map(([key, label]) => {
-    const [year, src] = key.split('|');
-    const active = String(state.year) === year && String(state.src) === src;
-    return `<button class="chip${active ? ' on' : ''}" type="button" data-year="${year}" data-src="${src}">${label}</button>`;
+/**
+ * 分类栏：左边固定的格式分类（全部/FIT/TCX/GPX/合并，无数据自动隐藏），
+ * 右边是可横向滑动的年份条（新→旧，向左滑动露出的旧年份会从格式块下方划过）。
+ */
+function renderChips(stats: { byYear: Record<string, number>; bySrc: Record<string, number> }): void {
+  const formats = $<HTMLDivElement>('cat-formats');
+  const years = $<HTMLDivElement>('cat-years');
+  if (!formats || !years) return;
+
+  // 格式分类：空分类隐藏；GPX 组含华为
+  const countOf = (src: SourceKind): number => {
+    if (src === 'gpx') return (stats.bySrc['gpx'] ?? 0) + (stats.bySrc['huawei'] ?? 0);
+    return stats.bySrc[src] ?? 0;
+  };
+  const groups: Array<[SourceKind, string]> = [
+    ['fit', 'FIT'],
+    ['tcx', 'TCX'],
+    ['gpx', 'GPX'],
+    ['merged', '合并'],
+  ];
+  const fmtHtml = groups.map(([src, label]) => {
+    const count = countOf(src);
+    if (count === 0) return '';
+    const active = state.src === src;
+    return `<button class="chip${active ? ' on' : ''}" type="button" data-cat-src="${src}">${label} ${count}</button>`;
   }).join('');
+  const allActive = state.src === 'all';
+  formats.innerHTML = `<button class="chip${allActive ? ' on' : ''}" type="button" data-cat-src="all">全部</button>${fmtHtml}`
+    + `<button class="cat-sort" id="sort-btn" type="button" aria-label="切换排序">${state.order === 'desc' ? '↓' : '↑'}</button>`;
+
+  // 年份条：新→旧，向左滑动看更早的年份
+  const yearKeys = Object.keys(stats.byYear).sort().reverse();
+  years.innerHTML = yearKeys.map((year) => {
+    const active = String(state.year) === year;
+    const count = stats.byYear[year];
+    return `<button class="chip${active ? ' on' : ''}" type="button" data-cat-year="${year}">${year} ${count}</button>`;
+  }).join('');
+
+  // 恢复年份条位置：innerHTML 重绘会重置横向滚动
+  years.scrollLeft = yearsScrollLeft;
 }
 
 function renderList(reset: boolean): void {
@@ -117,26 +148,48 @@ function renderList(reset: boolean): void {
   const tip = $<HTMLSpanElement>('list-tip');
   if (!list) return;
 
+  list.classList.toggle('selecting', state.selecting);
   if (reset) list.innerHTML = state.items.map(cardHtml).join('');
   else list.insertAdjacentHTML('beforeend', state.items.slice(-PAGE_SIZE).map(cardHtml).join(''));
 
   const isEmpty = state.items.length === 0;
-  if (empty) empty.hidden = !isEmpty;
-  if (foot) foot.hidden = isEmpty;
+  if (empty) empty.hidden = !isEmpty || state.selecting;
+  if (foot) foot.hidden = isEmpty || state.selecting;
   if (more) {
     more.disabled = state.next == null;
     more.textContent = state.next == null
       ? `已全部加载 · 共 ${state.total} 条`
       : `加载更多 · 已显示 ${state.items.length} / ${state.total}`;
   }
-  if (tip) tip.textContent = isEmpty ? '' : '下拉自动加载，或按年份快速定位';
+  if (tip) tip.textContent = isEmpty ? '' : state.selecting ? '点击卡片选择，长按卡片退出批量模式' : '下拉自动加载，或按年份快速定位';
+  syncBatchBar();
+}
+
+/** 批量选择条：显示选中数量，控制按钮可用性。 */
+function syncBatchBar(): void {
+  const bar = $<HTMLDivElement>('batch-bar');
+  const count = $<HTMLSpanElement>('batch-count');
+  const del = $<HTMLButtonElement>('batch-delete');
+  if (bar) bar.hidden = !state.selecting;
+  if (count) count.textContent = `已选 ${state.selected.size} 条`;
+  if (del) del.disabled = state.selected.size === 0;
+}
+
+function exitSelecting(): void {
+  state.selecting = false;
+  state.selected.clear();
+  renderList(true);
 }
 
 export async function loadFirstPage(): Promise<void> {
   if (state.loading) return;
   state.loading = true;
   try {
-    const query: ListQuery = { year: state.year, src: state.src, before: null, limit: PAGE_SIZE };
+    const query: ListQuery = {
+      year: state.year, src: state.src, limit: PAGE_SIZE, order: state.order,
+      before: state.order === 'desc' ? null : undefined,
+      after: state.order === 'asc' ? null : undefined,
+    } as ListQuery;
     const page = await listPage(query);
     state.items = page.items;
     state.next = page.next;
@@ -151,7 +204,11 @@ export async function loadNextPage(): Promise<void> {
   if (state.loading || state.next == null) return;
   state.loading = true;
   try {
-    const query: ListQuery = { year: state.year, src: state.src, before: state.next, limit: PAGE_SIZE };
+    const query: ListQuery = {
+      year: state.year, src: state.src, limit: PAGE_SIZE, order: state.order,
+      before: state.order === 'desc' ? state.next : undefined,
+      after: state.order === 'asc' ? state.next : undefined,
+    } as ListQuery;
     const page = await listPage(query);
     state.items = state.items.concat(page.items);
     state.next = page.next;
@@ -228,7 +285,7 @@ export function initRecords(onOpen: OpenHandler, hooks: RecordsHooks = {}): Reco
     await hooks.onExport?.(meta, choice as ExportFormat);
   };
 
-  // 长按（移动端）：480ms，手指移动超过 10px 视为滚动，取消长按。
+  // 长按（移动端）：480ms，手指移动超过 10px 视为滚动。长按进入批量选择模式。
   let pressTimer = 0;
   let pressX = 0;
   let pressY = 0;
@@ -236,6 +293,22 @@ export function initRecords(onOpen: OpenHandler, hooks: RecordsHooks = {}): Reco
   const cancelPress = (): void => {
     window.clearTimeout(pressTimer);
     pressTimer = 0;
+  };
+
+  const toggleSelect = (id: string): void => {
+    if (!id) return;
+    if (state.selected.has(id)) state.selected.delete(id);
+    else state.selected.add(id);
+    const card = list?.querySelector<HTMLElement>(`.rec[data-id="${id}"]`);
+    if (card) card.classList.toggle('sel', state.selected.has(id));
+    syncBatchBar();
+  };
+
+  const enterSelecting = (firstId: string): void => {
+    state.selecting = true;
+    state.selected.clear();
+    if (firstId) state.selected.add(firstId);
+    renderList(true);
   };
 
   list?.addEventListener('pointerdown', (event) => {
@@ -249,7 +322,8 @@ export function initRecords(onOpen: OpenHandler, hooks: RecordsHooks = {}): Reco
     pressTimer = window.setTimeout(() => {
       longPressed = true;
       if (navigator.vibrate) navigator.vibrate(12);
-      void openMenu(card.dataset.id ?? '');
+      if (state.selecting) toggleSelect(card.dataset.id ?? '');
+      else enterSelecting(card.dataset.id ?? '');
     }, 480);
   });
 
@@ -269,18 +343,72 @@ export function initRecords(onOpen: OpenHandler, hooks: RecordsHooks = {}): Reco
     void openMenu(card.dataset.id ?? '');
   });
 
-  const chips = $<HTMLDivElement>('chips');
-  chips?.addEventListener('click', (event) => {
-    const chip = (event.target as HTMLElement | null)?.closest<HTMLElement>('.chip');
+  // 分类栏：格式（左，固定）与年份（右，横向滑动）是两个独立查询维度
+  $<HTMLDivElement>('cat-formats')?.addEventListener('click', (event) => {
+    const sortBtn = (event.target as HTMLElement | null)?.closest<HTMLElement>('.cat-sort');
+    if (sortBtn) {
+      state.order = state.order === 'desc' ? 'asc' : 'desc';
+      void loadFirstPage();
+      void refreshSummary();
+      return;
+    }
+    const chip = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-cat-src]');
     if (!chip) return;
-    const year = chip.dataset.year ?? 'all';
-    const src = chip.dataset.src ?? 'all';
-    state.year = year === 'all' ? 'all' : Number(year);
+    const src = chip.dataset.catSrc ?? 'all';
     state.src = src as SourceKind | 'all';
     void refreshSummary();
     void loadFirstPage();
     const pane = $<HTMLElement>('records-pane');
     if (pane) pane.scrollTop = 0;
+  });
+
+  $<HTMLDivElement>('cat-years')?.addEventListener('click', (event) => {
+    const chip = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-cat-year]');
+    if (!chip) return;
+    const year = chip.dataset.catYear ?? 'all';
+    state.year = year === 'all' ? 'all' : Number(year);
+    void refreshSummary();
+    void loadFirstPage();
+    const pane = $<HTMLElement>('records-pane');
+    if (pane) pane.scrollTop = 0;
+  });
+
+  // 年份条横向滚动位置：重绘 chips 后恢复，避免筛选时跳回最左
+  $<HTMLDivElement>('cat-years')?.addEventListener('scroll', (event) => {
+    yearsScrollLeft = (event.currentTarget as HTMLElement).scrollLeft;
+  });
+
+  // 批量选择条
+  $<HTMLButtonElement>('batch-cancel')?.addEventListener('click', exitSelecting);
+  $<HTMLButtonElement>('batch-all')?.addEventListener('click', () => {
+    for (const item of state.items) state.selected.add(item.id);
+    renderList(true);
+  });
+  $<HTMLButtonElement>('batch-delete')?.addEventListener('click', async () => {
+    if (state.selected.size === 0) return;
+    const ok = await showConfirm({
+      title: `删除选中的 ${state.selected.size} 条记录？`,
+      message: '删除后 30 天内可在「设置 → 最近删除」里恢复；若已开启云备份，下次同步会一并移除云端副本。',
+      confirmText: '删除',
+      cancelText: '取消',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    const ids = [...state.selected];
+    for (const id of ids) await removeActivity(id);
+    state.items = state.items.filter((item) => !state.selected.has(item.id));
+    state.total = Math.max(0, state.total - ids.length);
+    state.selected.clear();
+    state.selecting = false;
+    renderList(true);
+    await refreshSummary();
+    await hooks.onChanged?.();
+    showToastAction(`已删除 ${ids.length} 条记录`, '撤销', async () => {
+      for (const id of ids) await restoreActivity(id);
+      await refreshSummary();
+      await loadFirstPage();
+      await hooks.onChanged?.();
+    });
   });
 
   $<HTMLButtonElement>('load-more')?.addEventListener('click', () => void loadNextPage());
@@ -306,6 +434,11 @@ export function initRecords(onOpen: OpenHandler, hooks: RecordsHooks = {}): Reco
     }
     const card = target?.closest<HTMLElement>('.rec');
     if (!card) return;
+    // 批量选择模式下，点击卡片是切换选中，不是打开创作页
+    if (state.selecting) {
+      toggleSelect(card.dataset.id ?? '');
+      return;
+    }
     const meta = findMeta(card.dataset.id ?? '');
     if (meta) openHandler(meta);
   });

@@ -184,6 +184,110 @@ body {
   color: var(--accent);
 }
 
+/* ── 分类栏：左固定格式 + 右滑动年份 ───────────────────────── */
+
+.cat-bar {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  overflow: hidden;
+}
+
+.cat-fixed {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 1;
+  background: var(--bg);
+  padding-right: 4px;
+}
+
+/* 年份从格式块下方划过时的渐隐遮罩，形成「悬浮遮盖」 */
+.cat-fixed::after {
+  content: '';
+  position: absolute;
+  right: -16px;
+  top: 0;
+  bottom: 0;
+  width: 16px;
+  background: linear-gradient(to right, var(--bg), transparent);
+  pointer-events: none;
+}
+
+.cat-scroll {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  flex: 0 0 auto;
+  margin-left: -18px;
+  padding-left: 18px;
+  scrollbar-width: none;
+}
+
+.cat-scroll::-webkit-scrollbar {
+  height: 0;
+}
+
+.cat-sort {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 26px;
+  margin-left: 4px;
+  border-radius: 20px;
+  border: 0.5px solid var(--line-strong);
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+/* ── 批量选择条 ───────────────────────────────────────────── */
+
+.batch-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
+  padding: 7px 12px;
+  border-radius: 12px;
+  background: var(--card);
+  border: 0.5px solid var(--line);
+  font-size: 11.5px;
+}
+
+.batch-bar[hidden] {
+  display: none;
+}
+
+.batch-count {
+  color: var(--muted);
+}
+
+.batch-spacer {
+  flex: 1 1 auto;
+}
+
+.batch-bar .link.danger {
+  color: var(--danger, #d64541);
+}
+
+.batch-bar .link:disabled {
+  opacity: 0.45;
+}
+
+.record-list.selecting .rec .mini,
+.record-list.selecting .rec .rec-more {
+  display: none;
+}
+
+.record-list.selecting .rec.sel {
+  outline: 1.5px solid var(--accent);
+  background: var(--accent-soft, var(--card-2));
+}
+
 /* ── chips ─────────────────────────────────────────────────── */
 
 .chips {
@@ -1546,6 +1650,20 @@ body {
   opacity: 0.45;
 }
 
+/* 清除地图缓存独立放底部的样式 */
+.clear-cache-btn {
+  width: 100%;
+  flex: 0 0 auto;
+}
+
+.clear-cache-btn:disabled {
+  opacity: 0.45;
+}
+
+#studio.fs .clear-cache-btn {
+  display: none;
+}
+
 .split-panel {
   border-radius: 11px;
   background: var(--card);
@@ -2375,6 +2493,34 @@ body {
 .fm-mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12.5px;
+}
+
+/* Token 输入：text 输入框 + CSS 遮罩代替 type=password（避开 EMUI 安全键盘） */
+.fm-secret {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fm-secret .fm-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.fm-secret-input.fm-masked {
+  -webkit-text-security: disc;
+}
+
+.fm-secret-toggle {
+  flex: 0 0 auto;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 9px;
+  border: 0.5px solid var(--line-strong);
+  background: none;
+  color: var(--muted);
+  font-size: 10.5px;
+  cursor: pointer;
 }
 
 .fm-field-hint {

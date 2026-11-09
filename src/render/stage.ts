@@ -47,15 +47,14 @@ interface TimelineState {
 const WIDTH = 1080;
 const HEIGHT = 1920;
 const RUN_MIN = 6;
-const RUN_MAX = 40;
+const RUN_MAX = 26;
 
 /**
  * 走线段时长（秒）：预览与导出共用的唯一权威，时间线其余各段都从这里伸长。
  *
- * 每公里约 0.36 秒走线 + 7 秒起步，线性直给 —— 刻意不用开方曲线：骑行
- * 高频区间在 30~100km，恰好是 √ 曲线最平的一段，30km 和 100km 只差 8 秒，
- * 观感上「都差不多长」。线性让常见区间真正拉开（30km≈28s → 100km≈50s），
- * 超长距离靠上限封顶（RUN_MAX），不会失控。
+ * 对数感知曲线：8 + 7.5 × ln(1+km)/ln(101)，短途不赶、超长不再线性暴涨。
+ * 旧线性公式（7 + 0.36×km，封顶 40s）下 67km 成片 42s，用户反馈太长；
+ * 新曲线 30km≈20s、67km≈23s、100km≈24.5s、200km+ 封顶 26s×pace。
  * 均速做修正：以 22km/h 为基准，快的压缩到 0.72x，慢的放宽到 1.35x ——
  * 同样的里程，骑得快画面利落，骑得慢沿途多看两眼。
  */
@@ -64,13 +63,14 @@ export function runDurationFor(distanceM: number, avgSpeed: number): number {
   const paceFactor = avgSpeed > 0
     ? clamp(22 / (avgSpeed * 3.6), 0.72, 1.35)
     : 1;
-  return clamp((7 + 0.36 * km) * paceFactor, RUN_MIN, RUN_MAX);
+  const shape = 8 + 7.5 * (Math.log(1 + km) / Math.log(101));
+  return clamp(shape * paceFactor, RUN_MIN, RUN_MAX);
 }
 const PAUSE_SECONDS = 1.9;
 const INTRO_SECONDS = 1.0;
-// 片尾：拉回全景 + 成绩卡浮现约 1.1 秒，之后停在海报帧。留 2 秒静止尾巴即可，
-// 再长就变成「视频卡住了」。
-const OUTRO_SECONDS = 3.2;
+// 片尾：拉回全景 + 成绩卡浮现约 1.1 秒，之后停在海报帧。留 1.2 秒静止尾巴即可，
+// 再长就变成「视频卡住了」。2026-11 起从 3.2s 压缩，配合走线曲线缩短整体时长。
+const OUTRO_SECONDS = 2.4;
 const RESULT_REVEAL_DELAY = 0.25;
 const RESULT_REVEAL_SECONDS = 0.85;
 const RUN_ANCHOR_Y = 900;
@@ -1129,8 +1129,56 @@ export class MotionStage {
     });
   }
 
-  private drawRoute(ctx: CanvasRenderingContext2D, camera: MapCamera, progress: number, result: boolean): void {
-    // 封面/成绩卡要画整条轨迹：30k+ GPS 点每帧投影 + 4 次全路径描边在手机上
+  /** 走过段持久绘制用的抽稀轨迹（世界坐标 + 累计距离），构建一次终身复用。 */
+  private walkedCache: Array<{ point: MapRoutePoint; distance: number }> | null = null;
+
+  private walkedRoute(): Array<{ point: MapRoutePoint; distance: number }> {
+    if (!this.walkedCache) {
+      const points = this.activity.points;
+      const route = this.map.route;
+      const stride = Math.max(1, Math.ceil(points.length / 1200));
+      const out: Array<{ point: MapRoutePoint; distance: number }> = [];
+      for (let i = 0; i < points.length; i += stride) {
+        out.push({ point: route[i], distance: points[i].distance });
+      }
+      const lastDistance = points[points.length - 1].distance;
+      if (out[out.length - 1].distance !== lastDistance) {
+        out.push({ point: route[points.length - 1], distance: lastDistance });
+      }
+      this.walkedCache = out;
+    }
+    return this.walkedCache;
+  }
+
+  /** 画已走过段：低透明度细线，亮色主路径叠在上面不受影响。 */
+  private drawWalkedTrail(ctx: CanvasRenderingContext2D, camera: MapCamera, targetDistance: number): void {
+    const walked = this.walkedRoute();
+    let lo = 0;
+    let hi = walked.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (walked[mid].distance < targetDistance) lo = mid + 1;
+      else hi = mid;
+    }
+    if (lo < 2) return;
+    ctx.save();
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.globalAlpha = 0.35;
+    ctx.strokeStyle = this.c.route[1];
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    const first = this.map.screenPoint(walked[0].point, camera, WIDTH, HEIGHT);
+    ctx.moveTo(first.x, first.y);
+    for (let i = 1; i <= lo; i += 1) {
+      const s = this.map.screenPoint(walked[i].point, camera, WIDTH, HEIGHT);
+      ctx.lineTo(s.x, s.y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  private drawRoute(ctx: CanvasRenderingContext2D, camera: MapCamera, progress: number, result: boolean): void {    // 封面/成绩卡要画整条轨迹：30k+ GPS 点每帧投影 + 4 次全路径描边在手机上
     // 是秒级开销（开头冻结、结尾成绩卡段时间冻住的主源）。按固定步长抽稀到
     // ~1500 点并缓存，13px 描边宽度下视觉无差。巡航段本来只画 720 点局部。
     const route = result ? this.overviewRoute() : this.map.route;
@@ -1152,6 +1200,13 @@ export class MotionStage {
     if (localIndex < 1 && progress <= 0.001) {
       this.drawStartDot(ctx, screen[0]);
       return;
+    }
+
+    // 已走过段持久保留：世界坐标投影画淡线。旧逻辑只回看 720 个原始点，
+    // 镜头一移动身后的轨迹就从画面上整段消失（贪吃蛇）；改成抽稀全轨迹后
+    // 走过的地方一直在，路线回折或镜头回扫时能看到。1200 点的投影开销可控。
+    if (!result) {
+      this.drawWalkedTrail(ctx, camera, target);
     }
 
     const glowPath = new Path2D();
@@ -1332,6 +1387,7 @@ export class MotionStage {
     const metrics = [
       this.resultMetric('route', '总距离', true, (this.activity.distanceM / 1000).toFixed(2), '公里', this.c.accent),
       this.resultMetric('clock', '运动时长', this.activity.durationAvailable, this.activity.durationAvailable ? formatDuration(this.activity.durationSec) : '', '时:分:秒', this.c.blue),
+      this.resultMetric('clock', '总时长', this.activity.elapsedAvailable, this.activity.elapsedAvailable ? formatDuration(this.activity.elapsedSec) : '', '时:分:秒', this.c.blue),
       this.resultMetric('speedometer', '最快速度', this.activity.maxSpeedAvailable, formatSpeedKmh(this.activity.maxSpeed), '公里/小时', this.c.orange),
       this.resultMetric('heart', '最高心率', this.activity.heartRateAvailable, this.activity.maxHeartRate ? String(Math.round(this.activity.maxHeartRate)) : '', '次/分钟', this.c.red),
       this.resultMetric('mountain', '最高海拔', this.activity.altitudeAvailable, this.activity.maxAltitude != null ? String(Math.round(this.activity.maxAltitude)) : '', '米', this.c.accent2),
