@@ -293,3 +293,78 @@ export function showText(options: { title: string; text: string; confirmText?: s
     });
   });
 }
+
+export interface DeviceAuthPanel {
+  /** 更新面板底部的状态行（等待授权 / 秒数 / 成功） */
+  setStatus: (text: string, tone?: 'info' | 'ok' | 'error') => void;
+  /** 关闭面板（授权完成后调用） */
+  close: () => void;
+  /** 用户手动关掉面板时回调，用于取消后台轮询 */
+  onCancel: (handler: () => void) => void;
+}
+
+/**
+ * 设备码授权面板：把 user_code 大字展示，用户点「打开授权页」去浏览器登录，
+ * App 这边轮询换 token。比「自己粘贴 access_token」靠谱得多。
+ */
+export function showDeviceAuth(options: {
+  userCode: string;
+  verifyUrl: string;
+  openUrl: (url: string) => void;
+}): DeviceAuthPanel {
+  const { root, close } = mount(`
+    <div class="fm-dialog-card">
+      <header class="fm-dialog-head">
+        <h3>授权百度网盘</h3>
+        <p>1. 点下面的按钮打开百度授权页（或手动访问 ${escapeHtml(options.verifyUrl)}）<br>
+           2. 登录后输入下方验证码并确认<br>
+           3. 回到 App，授权成功后会自动继续</p>
+      </header>
+      <div class="fm-dialog-body">
+        <div style="text-align:center;padding:6px 0 14px">
+          <div style="font-family:ui-monospace,Menlo,monospace;font-size:30px;letter-spacing:6px;
+                      font-weight:600;color:var(--fg);user-select:all;-webkit-user-select:all">
+            ${escapeHtml(options.userCode)}
+          </div>
+        </div>
+        <button type="button" class="fm-btn primary wide" data-act="open">打开百度授权页</button>
+      </div>
+      <p class="fm-dialog-error" data-status hidden></p>
+      <footer class="fm-dialog-actions">
+        <button type="button" class="fm-btn ghost" data-act="cancel">取消</button>
+      </footer>
+    </div>
+  `);
+
+  const status = root.querySelector('[data-status]') as HTMLElement;
+  let cancelHandler: (() => void) | null = null;
+  let closed = false;
+  const cancel = (): void => {
+    if (closed) return;
+    closed = true;
+    close();
+    cancelHandler?.();
+  };
+  root.querySelector('[data-act="cancel"]')?.addEventListener('click', cancel);
+  root.querySelector('.fm-dialog-mask')?.addEventListener('click', cancel);
+  root.querySelector('[data-act="open"]')?.addEventListener('click', () => {
+    options.openUrl(options.verifyUrl);
+  });
+  // 打开后就先给一句提示，避免用户以为没反应
+  status.hidden = false;
+  status.textContent = '等待你在浏览器里完成授权…';
+
+  return {
+    setStatus: (text, tone = 'info') => {
+      status.hidden = false;
+      status.textContent = text;
+      status.style.color = tone === 'error' ? 'var(--danger)' : tone === 'ok' ? 'var(--accent)' : 'var(--dim)';
+    },
+    close: () => {
+      if (closed) return;
+      closed = true;
+      close();
+    },
+    onCancel: (handler) => { cancelHandler = handler; },
+  };
+}

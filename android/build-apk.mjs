@@ -39,12 +39,19 @@ fs.copyFileSync(path.join(dist, 'index.html'), path.join(android, 'assets', 'www
 const pkgVersion = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version ?? '1.0.0';
 const todayStamp = Number(new Date().toISOString().slice(0, 10).replace(/-/g, ''));
 
+// aapt2 会优先用 manifest 里写的版本号，命令行参数不一定生效；
+// 生成一份替换好版本号的副本再 link，保证 package.json 真正是唯一来源。
+const manifestOut = path.join(build, 'AndroidManifest.xml');
+fs.writeFileSync(manifestOut, fs.readFileSync(path.join(android, 'AndroidManifest.xml'), 'utf8')
+  .replace(/android:versionCode="[^"]*"/, `android:versionCode="${todayStamp}"`)
+  .replace(/android:versionName="[^"]*"/, `android:versionName="${pkgVersion}"`));
+
 run(aapt2, ['compile', '--dir', path.join(android, 'res'), '-o', path.join(build, 'res.zip')], android);
 run(aapt2, [
   'link',
   '-o', path.join(build, 'app-unsigned.apk'),
   '-I', androidJar,
-  '--manifest', path.join(android, 'AndroidManifest.xml'),
+  '--manifest', manifestOut,
   '-A', path.join(android, 'assets'),
   '--java', path.join(build, 'gen'),
   '--min-sdk-version', '29',

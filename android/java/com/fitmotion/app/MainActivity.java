@@ -583,6 +583,19 @@ public class MainActivity extends Activity {
             cleanup();
         }
 
+        /** 用系统浏览器打开外部页面（百度网盘授权页等）：WebView 自己会拦掉外部跳转。 */
+        @JavascriptInterface
+        public void openUrl(String url) {
+            if (url == null || url.length() == 0) return;
+            try {
+                Intent view = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                view.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(view);
+            } catch (Throwable ignored) {
+                // 没有浏览器就静默失败，用户可以手动输验证码
+            }
+        }
+
         /** 分享 MediaStore 里已保存的内容（原生导出直接返回的 content uri）。 */
         @JavascriptInterface
         public boolean shareUri(String uri, String mime) {

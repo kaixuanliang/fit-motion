@@ -42,6 +42,8 @@ declare global {
       updateExportProgress?: (percent: number, text: string) => void;
       endExport?: () => void;
       isExportCancelled?: () => boolean;
+      /** 用系统浏览器打开外部页面（百度网盘授权页） */
+      openUrl?: (url: string) => void;
     };
   }
 }

@@ -11,8 +11,14 @@ import { cacheFootprint, CACHE_BUDGET } from '../store/cache';
 import { getSetting, setSetting, storageEstimate } from '../store/db';
 import { allMeta, deletedCount, libraryStats, unsyncedMeta } from '../store/repo';
 import { saveBlob } from '../export/save';
-import { showActionSheet, showAlert, showConfirm, showForm } from './dialog';
+import { showActionSheet, showAlert, showConfirm, showDeviceAuth, showForm } from './dialog';
 import { PROVIDER_META, type ProviderConfig, type ProviderId } from '../backup/adapter';
+import {
+  pollDeviceToken,
+  readBaiduOAuth,
+  requestDeviceCode,
+  saveBaiduOAuth,
+} from '../backup/baidu-auth';
 import {
   boundProviders,
   hasSessionPassword,
@@ -52,6 +58,22 @@ export function mb(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   if (bytes > 0) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return '0 MB';
+}
+
+/** 授权页必须走系统浏览器：WebView 的 shouldOverrideUrlLoading 会把外部链接拦住。 */
+function openExternal(url: string): void {
+  const bridge = (window as unknown as {
+    FitMotionAndroid?: { openUrl?: (target: string) => void };
+  }).FitMotionAndroid;
+  if (bridge?.openUrl) {
+    try {
+      bridge.openUrl(url);
+      return;
+    } catch {
+      /* 落到 window.open */
+    }
+  }
+  window.open(url, '_blank');
 }
 
 function setDot(id: ProviderId, state: 'off' | 'ok' | 'bad'): void {
@@ -387,21 +409,95 @@ async function bindProvider(id: ProviderId, mode: 'edit' | 'add' = 'edit', editI
   }
 
   if (id === 'baidu') {
+    const saved = await readBaiduOAuth();
     const values = await showForm({
-      title: '绑定百度网盘',
-      desc: '需要在百度网盘开放平台（pan.baidu.com/union）实名注册个人开发者并创建应用，拿到 AppKey 后授权。授权完成后把 access_token 粘贴到这里。',
-      confirmText: '保存并验证',
+      title: mode === 'add' ? '绑定百度网盘' : '编辑百度网盘',
+      desc: '在百度网盘开放平台（pan.baidu.com/union）创建「软件应用」后，填入应用详情里的 AppKey / SecretKey，下一步用百度账号授权一次即可。App 不会保存你的百度账号密码。',
+      confirmText: '下一步：授权',
       fields: [
-        { key: 'token', label: 'Access Token', value: editing?.token ?? '', placeholder: '百度网盘开放平台授权后获得的 access_token', type: 'password', mono: true },
-        { key: 'dir', label: '远端目录', value: editing?.repo ?? 'apps/fitmotion', placeholder: 'apps/fitmotion', mono: true },
+        {
+          key: 'clientId',
+          label: 'AppKey',
+          value: saved?.clientId ?? '',
+          placeholder: '开放平台 → 应用详情 → AppKey',
+          mono: true,
+        },
+        {
+          key: 'clientSecret',
+          label: 'SecretKey',
+          value: saved?.clientSecret ?? '',
+          placeholder: '同一页面的 SecretKey',
+          type: 'password',
+          mono: true,
+          hint: '只存在本机，用来换取 / 刷新 access_token，不会上传到任何服务器。',
+        },
+        {
+          key: 'dir',
+          label: '远端目录',
+          value: editing?.repo ?? 'apps/fitmotion',
+          placeholder: 'apps/fitmotion',
+          mono: true,
+          hint: '第三方应用只能读写 /apps/ 下自己的目录，目录名一般是你的应用名。',
+        },
       ],
       validate: (form) => {
-        if (form.token.length < 20) return 'access_token 看起来不对，请整段粘贴';
+        if (!form.clientId) return '请填写 AppKey';
+        if (!form.clientSecret) return '请填写 SecretKey';
+        if (!form.dir.trim().startsWith('apps/')) return '远端目录必须以 apps/ 开头，例如 apps/FitMotion';
         return null;
       },
     });
     if (!values) return;
-    const config: ProviderConfig = { token: values.token.trim(), owner: 'baidu', repo: values.dir.trim() || 'apps/fitmotion', branch: '' };
+
+    const clientId = values.clientId.trim();
+    const clientSecret = values.clientSecret.trim();
+    const dir = values.dir.trim().replace(/\/+$/, '');
+    const reusable = saved
+      && saved.clientId === clientId
+      && saved.clientSecret === clientSecret
+      && saved.accessToken
+      && saved.expiresAt - Date.now() > 3600 * 1000;
+
+    if (reusable) {
+      setSyncProgress('复用已有授权…', 40);
+    } else {
+      // 设备码授权：拿 user_code → 用户在浏览器确认 → 轮询换 token
+      const device = await requestDeviceCode(clientId).catch((error: unknown) => {
+        void showAlert(
+          error instanceof Error ? error.message : '获取授权码失败',
+          { title: '无法开始授权', tone: 'error' },
+        );
+        return null;
+      });
+      if (!device) return;
+      const signal = { cancelled: false };
+      const panel = showDeviceAuth({
+        userCode: device.userCode,
+        verifyUrl: device.verificationUrl,
+        openUrl: (url) => openExternal(url),
+      });
+      panel.onCancel(() => { signal.cancelled = true; });
+      setSyncProgress('等待百度账号授权…', 20);
+      try {
+        const token = await pollDeviceToken(clientId, clientSecret, device, {
+          signal,
+          onTick: (left) => panel.setStatus(`等待你在浏览器里点「同意授权」…（${left}s 后过期）`),
+        });
+        await saveBaiduOAuth(token);
+        panel.setStatus('授权成功，正在保存…', 'ok');
+        window.setTimeout(() => panel.close(), 600);
+      } catch (error) {
+        panel.close();
+        if (signal.cancelled) return;
+        void showAlert(
+          error instanceof Error ? error.message : '授权失败',
+          { title: '授权失败', tone: 'error' },
+        );
+        return;
+      }
+    }
+
+    const config: ProviderConfig = { token: '', owner: 'baidu', repo: dir, branch: '' };
     const next: ProviderTargets = current
       ? mode === 'edit'
         ? { targets: current.targets.map((row, i) => (i === changedIdx ? config : row)), active: Math.min(current.active, current.targets.length - 1) }
@@ -410,12 +506,12 @@ async function bindProvider(id: ProviderId, mode: 'edit' | 'add' = 'edit', editI
     await setSetting(CONFIG_KEY[id], next);
     await renderBackup();
     setSyncCard(true);
-    setSyncProgress('正在验证百度网盘…', 30);
+    setSyncProgress('正在验证百度网盘…', 60);
     const status = await probeAll(12000);
     const mine = status.find((row) => row.id === id);
     if (!mine || !mine.ok) {
       setDot(id, 'bad');
-      setSyncProgress('百度网盘验证失败', 100, mine?.message ?? 'token 无效或已过期');
+      setSyncProgress('百度网盘验证失败', 100, mine?.message ?? '连接失败');
       void showAlert(mine?.message ?? '百度网盘连接失败', { title: '连接失败', tone: 'error' });
       return;
     }
