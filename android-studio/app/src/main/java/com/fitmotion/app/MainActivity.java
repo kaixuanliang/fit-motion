@@ -1,0 +1,654 @@
+package com.fitmotion.app;
+
+import android.annotation.SuppressLint;
+import android.app.Activity;
+import android.content.ActivityNotFoundException;
+import android.content.ContentValues;
+import android.content.Intent;
+import android.graphics.Color;
+import android.os.Build;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
+import android.media.MediaCodec;
+import android.media.MediaCodecInfo;
+import android.media.MediaExtractor;
+import android.media.MediaFormat;
+import android.media.MediaMuxer;
+import android.net.Uri;
+import android.os.Bundle;
+import android.os.Environment;
+import android.provider.MediaStore;
+import android.util.Base64;
+import android.view.Surface;
+import android.view.View;
+import android.view.WindowManager;
+import android.webkit.JavascriptInterface;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+import android.widget.Toast;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.ByteBuffer;
+
+public class MainActivity extends Activity {
+    public static final String EXTRA_OPEN_EXPORT = "com.fitmotion.app.OPEN_EXPORT";
+    private static final int REQUEST_FILE = 1001;
+    private static final int REQUEST_SAVE = 1002;
+    private WebView webView;
+    private ValueCallback<Uri[]> fileCallback;
+    private File pendingSaveFile;
+    private String pendingSaveName;
+    private String pendingSaveMime;
+    private NativeFrameServer nativeFrameServer;
+    private View customView;
+    private WebChromeClient.CustomViewCallback customViewCallback;
+    private FrameLayout fullscreenContainer;
+
+    @SuppressLint("SetJavaScriptEnabled")
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        getWindow().setStatusBarColor(Color.rgb(5, 9, 10));
+        getWindow().setNavigationBarColor(Color.rgb(5, 9, 10));
+        setImmersive();
+        if (Build.VERSION.SDK_INT >= 33) {
+            try {
+                requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 9001);
+            } catch (Exception ignored) { }
+        }
+
+        webView = new WebView(this);
+        webView.setBackgroundColor(Color.rgb(5, 9, 10));
+        webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        webView.addJavascriptInterface(new SaveBridge(), "FitMotionAndroid");
+
+        WebSettings settings = webView.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setAllowFileAccess(true);
+        settings.setAllowContentAccess(true);
+        settings.setAllowFileAccessFromFileURLs(true);
+        settings.setAllowUniversalAccessFromFileURLs(true);
+        settings.setMediaPlaybackRequiresUserGesture(false);
+        settings.setSupportZoom(false);
+        settings.setBuiltInZoomControls(false);
+        settings.setTextZoom(100);
+        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+        settings.setUserAgentString(settings.getUserAgentString() + " FitMotion/1.0");
+
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                return !url.startsWith("file:///android_asset/");
+            }
+        });
+
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(
+                    WebView view,
+                    ValueCallback<Uri[]> callback,
+                    FileChooserParams params) {
+                if (fileCallback != null) {
+                    fileCallback.onReceiveValue(null);
+                }
+                fileCallback = callback;
+                Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                intent.setType("*/*");
+                intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{
+                        "application/octet-stream",
+                        "application/fit",
+                        "*/*"
+                });
+                try {
+                    startActivityForResult(Intent.createChooser(intent, "选择 FIT 文件"), REQUEST_FILE);
+                    return true;
+                } catch (ActivityNotFoundException error) {
+                    fileCallback = null;
+                    Toast.makeText(MainActivity.this, "没有找到文件选择器", Toast.LENGTH_SHORT).show();
+                    return false;
+                }
+            }
+            @Override
+            public void onShowCustomView(View view, CustomViewCallback callback) {
+                if (customView != null) {
+                    callback.onCustomViewHidden();
+                    return;
+                }
+                customView = view;
+                customViewCallback = callback;
+                fullscreenContainer = new FrameLayout(MainActivity.this);
+                fullscreenContainer.setBackgroundColor(Color.BLACK);
+                fullscreenContainer.addView(view, new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                ((ViewGroup) getWindow().getDecorView()).addView(fullscreenContainer, new ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                webView.setVisibility(View.GONE);
+                setImmersive();
+            }
+
+            @Override
+            public void onHideCustomView() {
+                hideFullscreenView();
+            }
+        });
+
+        setContentView(webView);
+        webView.loadUrl("file:///android_asset/www/index.html");
+        if (getIntent() != null && getIntent().getBooleanExtra(EXTRA_OPEN_EXPORT, false)) {
+            webView.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    openExportPage();
+                }
+            }, 900);
+        }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (intent != null && intent.getBooleanExtra(EXTRA_OPEN_EXPORT, false)) {
+            openExportPage();
+        }
+    }
+
+    private void openExportPage() {
+        if (webView == null) return;
+        webView.evaluateJavascript(
+                "(function(){try{return window.fitMotionOpenExport ? window.fitMotionOpenExport() : false;}catch(e){return false;}})()",
+                null);
+    }
+
+    private void hideFullscreenView() {
+        if (fullscreenContainer != null) {
+            ((ViewGroup) getWindow().getDecorView()).removeView(fullscreenContainer);
+            fullscreenContainer = null;
+        }
+        customView = null;
+        if (webView != null) webView.setVisibility(View.VISIBLE);
+        if (customViewCallback != null) {
+            customViewCallback.onCustomViewHidden();
+            customViewCallback = null;
+        }
+        setImmersive();
+    }
+
+    private void setImmersive() {
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) setImmersive();
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == REQUEST_FILE) {
+            if (fileCallback == null) return;
+            Uri[] results = null;
+            if (resultCode == RESULT_OK && data != null) {
+                if (data.getClipData() != null) {
+                    int count = data.getClipData().getItemCount();
+                    results = new Uri[count];
+                    for (int i = 0; i < count; i++) {
+                        results[i] = data.getClipData().getItemAt(i).getUri();
+                    }
+                } else if (data.getData() != null) {
+                    results = new Uri[]{data.getData()};
+                }
+            }
+            fileCallback.onReceiveValue(results);
+            fileCallback = null;
+            return;
+        }
+        if (requestCode == REQUEST_SAVE) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null && pendingSaveFile != null) {
+                try {
+                    OutputStream out = getContentResolver().openOutputStream(data.getData());
+                    if (out == null) throw new IOException("无法打开目标文件");
+                    FileInputStream in = new FileInputStream(pendingSaveFile);
+                    try {
+                        byte[] buffer = new byte[64 * 1024];
+                        int read;
+                        while ((read = in.read(buffer)) > 0) out.write(buffer, 0, read);
+                        out.flush();
+                    } finally {
+                        in.close();
+                        out.close();
+                    }
+                    Toast.makeText(this, pendingSaveMime != null && pendingSaveMime.startsWith("image/") ? "图片已保存" : "视频已保存", Toast.LENGTH_LONG).show();
+                } catch (Exception error) {
+                    Toast.makeText(this, "保存失败：" + error.getMessage(), Toast.LENGTH_LONG).show();
+                }
+            } else {
+                Toast.makeText(this, "已取消保存", Toast.LENGTH_SHORT).show();
+            }
+            if (pendingSaveFile != null) pendingSaveFile.delete();
+            pendingSaveFile = null;
+            pendingSaveName = null;
+            pendingSaveMime = null;
+            return;
+        }
+        super.onActivityResult(requestCode, resultCode, data);
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (customView != null) {
+            hideFullscreenView();
+            return;
+        }
+        if (webView != null) {
+            webView.evaluateJavascript(
+                    "(function(){try{return window.fitMotionHandleBack ? window.fitMotionHandleBack() : false;}catch(e){return false;}})()",
+                    new ValueCallback<String>() {
+                        @Override
+                        public void onReceiveValue(String value) {
+                            boolean handled = "true".equals(value);
+                            if (!handled) {
+                                if (webView != null && webView.canGoBack()) {
+                                    webView.goBack();
+                                } else {
+                                    finish();
+                                }
+                            }
+                        }
+                    });
+            return;
+        }
+        super.onBackPressed();
+    }
+
+    @Override
+    protected void onPause() {
+        // Keep the WebView timers alive while a foreground export service is active.
+        if (webView != null && !ExportService.isActive()) webView.onPause();
+        super.onPause();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (webView != null) webView.onResume();
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (customViewCallback != null) {
+            customViewCallback.onCustomViewHidden();
+            customViewCallback = null;
+        }
+        if (nativeFrameServer != null) {
+            nativeFrameServer.stop();
+            nativeFrameServer = null;
+        }
+        if (webView != null) {
+            webView.removeJavascriptInterface("FitMotionAndroid");
+            webView.loadUrl("about:blank");
+            webView.destroy();
+            webView = null;
+        }
+        super.onDestroy();
+    }
+
+    /**
+     * Chunked base64 bridge: MediaRecorder output can be 10–25 MB, which is too
+     * large for one WebView bridge string. JS slices it into 256 KB chunks.
+     */
+    private class SaveBridge {
+        private File cacheFile;
+        private FileOutputStream stream;
+        private String fileName = "fit-motion.mp4";
+        private String mimeType = "video/mp4";
+
+        @JavascriptInterface
+        public void beginExport(String title) {
+            try {
+                ExportService.start(MainActivity.this, title);
+                ExportService.update(MainActivity.this, 0, "准备导出…");
+            } catch (Throwable ignored) { }
+        }
+
+        @JavascriptInterface
+        public void updateExportProgress(int percent, String text) {
+            try { ExportService.update(MainActivity.this, percent, text); } catch (Throwable ignored) { }
+        }
+
+        @JavascriptInterface
+        public void endExport() {
+            try { ExportService.stop(MainActivity.this); } catch (Throwable ignored) { }
+        }
+
+        @JavascriptInterface
+        public boolean isExportCancelled() {
+            return ExportService.isCancelRequested();
+        }
+
+        @JavascriptInterface
+        public String nativeExportUrl() {
+            if (nativeFrameServer == null) nativeFrameServer = new NativeFrameServer(MainActivity.this);
+            return nativeFrameServer.start();
+        }
+
+        @JavascriptInterface
+        public boolean beginSave(String name, String mime) {
+            closeStream();
+            fileName = sanitize(name);
+            mimeType = (mime == null || mime.length() == 0) ? "video/mp4" : mime;
+            try {
+                cacheFile = new File(getCacheDir(), "fit-motion-export.tmp");
+                stream = new FileOutputStream(cacheFile);
+                return true;
+            } catch (Exception error) {
+                cacheFile = null;
+                return false;
+            }
+        }
+
+        @JavascriptInterface
+        public boolean appendSave(String chunk) {
+            if (stream == null) return false;
+            try {
+                stream.write(Base64.decode(chunk, Base64.DEFAULT));
+                return true;
+            } catch (Exception error) {
+                return false;
+            }
+        }
+
+        @JavascriptInterface
+        public String finishSave() {
+            closeStream();
+            if (cacheFile == null || !cacheFile.exists() || cacheFile.length() == 0) {
+                cleanup();
+                return "";
+            }
+            String cleanMime = mimeType.split(";")[0];
+            File outputFile = cacheFile;
+            String outputName = fileName;
+            String outputMime = cleanMime;
+            if (cleanMime.contains("webm")) {
+                String base = fileName.replaceAll("\\.(mp4|webm)$", "");
+                File converted = new File(getCacheDir(), "fit-motion-export-converted.mp4");
+                if (transcodeToMp4(cacheFile, converted)) {
+                    outputFile = converted;
+                    outputName = base + ".mp4";
+                    outputMime = "video/mp4";
+                } else {
+                    outputName = base + ".webm";
+                    outputMime = "video/webm";
+                }
+            }
+            try {
+                String uri = saveToMediaStore(outputFile, outputName, outputMime);
+                if (outputFile != cacheFile) outputFile.delete();
+                cacheFile.delete();
+                cacheFile = null;
+                final String kind = outputMime.startsWith("image/") ? "图片" : "视频";
+                final String message = kind + "已保存到 Download/FIT Motion/" + outputName;
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
+                    }
+                });
+                return uri;
+            } catch (Exception error) {
+                // Huawei/EMUI can reject MediaStore inserts in some storage modes.
+                // Keep the output cache file and let the user pick a destination through SAF.
+                pendingSaveFile = outputFile;
+                pendingSaveName = outputName;
+                pendingSaveMime = outputMime;
+                if (outputFile != cacheFile) cacheFile.delete();
+                cacheFile = null;
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        openSavePicker();
+                    }
+                });
+                return "picker";
+            }
+        }
+
+        @JavascriptInterface
+        public void cancelSave() {
+            closeStream();
+            cleanup();
+        }
+
+        private boolean transcodeToMp4(File input, File output) {
+            MediaExtractor extractor = null;
+            MediaCodec decoder = null;
+            MediaCodec encoder = null;
+            MediaMuxer muxer = null;
+            Surface surface = null;
+            try {
+                if (output.exists()) output.delete();
+                extractor = new MediaExtractor();
+                extractor.setDataSource(input.getAbsolutePath());
+                int videoTrack = -1;
+                MediaFormat inFormat = null;
+                for (int i = 0; i < extractor.getTrackCount(); i++) {
+                    MediaFormat format = extractor.getTrackFormat(i);
+                    String mime = format.getString(MediaFormat.KEY_MIME);
+                    if (mime != null && mime.startsWith("video/")) {
+                        videoTrack = i;
+                        inFormat = format;
+                        break;
+                    }
+                }
+                if (videoTrack < 0 || inFormat == null) return false;
+                extractor.selectTrack(videoTrack);
+
+                int width = inFormat.getInteger(MediaFormat.KEY_WIDTH);
+                int height = inFormat.getInteger(MediaFormat.KEY_HEIGHT);
+                if ((width & 1) == 1) width -= 1;
+                if ((height & 1) == 1) height -= 1;
+
+                encoder = MediaCodec.createEncoderByType("video/avc");
+                MediaFormat outFormat = MediaFormat.createVideoFormat("video/avc", width, height);
+                outFormat.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
+                outFormat.setInteger(MediaFormat.KEY_BIT_RATE, 10_000_000);
+                outFormat.setInteger(MediaFormat.KEY_FRAME_RATE, 30);
+                outFormat.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
+                encoder.configure(outFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+                surface = encoder.createInputSurface();
+                encoder.start();
+
+                decoder = MediaCodec.createDecoderByType(inFormat.getString(MediaFormat.KEY_MIME));
+                decoder.configure(inFormat, surface, null, 0);
+                decoder.start();
+
+                muxer = new MediaMuxer(output.getAbsolutePath(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+                MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+                boolean inputDone = false;
+                boolean decoderDone = false;
+                boolean eosSignaled = false;
+                boolean encoderDone = false;
+                boolean muxerStarted = false;
+                int outTrack = -1;
+                long deadline = System.currentTimeMillis() + 45_000;
+
+                while (!encoderDone && System.currentTimeMillis() < deadline) {
+                    if (!inputDone) {
+                        int inIndex = decoder.dequeueInputBuffer(10_000);
+                        if (inIndex >= 0) {
+                            ByteBuffer buffer = decoder.getInputBuffer(inIndex);
+                            int size = buffer == null ? -1 : extractor.readSampleData(buffer, 0);
+                            if (size < 0) {
+                                decoder.queueInputBuffer(inIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
+                                inputDone = true;
+                            } else {
+                                decoder.queueInputBuffer(inIndex, 0, size, extractor.getSampleTime(), 0);
+                                extractor.advance();
+                            }
+                        }
+                    }
+
+                    while (true) {
+                        int outIndex = decoder.dequeueOutputBuffer(info, 0);
+                        if (outIndex == MediaCodec.INFO_TRY_AGAIN_LATER) break;
+                        if (outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) continue;
+                        if (outIndex >= 0) {
+                            boolean eos = (info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
+                            decoder.releaseOutputBuffer(outIndex, true);
+                            if (eos) decoderDone = true;
+                        }
+                    }
+
+                    if (decoderDone && !eosSignaled) {
+                        encoder.signalEndOfInputStream();
+                        eosSignaled = true;
+                    }
+
+                    while (true) {
+                        int outIndex = encoder.dequeueOutputBuffer(info, 10_000);
+                        if (outIndex == MediaCodec.INFO_TRY_AGAIN_LATER) break;
+                        if (outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                            if (!muxerStarted) {
+                                outTrack = muxer.addTrack(encoder.getOutputFormat());
+                                muxer.start();
+                                muxerStarted = true;
+                            }
+                            continue;
+                        }
+                        if (outIndex >= 0) {
+                            ByteBuffer buffer = encoder.getOutputBuffer(outIndex);
+                            if (info.size > 0 && muxerStarted && buffer != null) {
+                                buffer.position(info.offset);
+                                buffer.limit(info.offset + info.size);
+                                muxer.writeSampleData(outTrack, buffer, info);
+                            }
+                            encoder.releaseOutputBuffer(outIndex, false);
+                            if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                                encoderDone = true;
+                            }
+                        }
+                    }
+                }
+                if (!encoderDone) return false;
+                return muxerStarted && output.exists() && output.length() > 0;
+            } catch (Exception error) {
+                return false;
+            } finally {
+                try {
+                    if (decoder != null) decoder.stop();
+                } catch (Exception ignored) {
+                }
+                try {
+                    if (decoder != null) decoder.release();
+                } catch (Exception ignored) {
+                }
+                try {
+                    if (encoder != null) encoder.stop();
+                } catch (Exception ignored) {
+                }
+                try {
+                    if (encoder != null) encoder.release();
+                } catch (Exception ignored) {
+                }
+                try {
+                    if (muxer != null) muxer.stop();
+                } catch (Exception ignored) {
+                }
+                try {
+                    if (muxer != null) muxer.release();
+                } catch (Exception ignored) {
+                }
+                try {
+                    if (surface != null) surface.release();
+                } catch (Exception ignored) {
+                }
+                try {
+                    if (extractor != null) extractor.release();
+                } catch (Exception ignored) {
+                }
+            }
+        }
+
+        private String saveToMediaStore(File file, String name, String mime) throws IOException {
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.Downloads.DISPLAY_NAME, name);
+            values.put(MediaStore.Downloads.MIME_TYPE, mime);
+            values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/FIT Motion");
+            values.put(MediaStore.Downloads.IS_PENDING, 1);
+            Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+            if (uri == null) throw new IOException("MediaStore 返回空 URI");
+            OutputStream out = getContentResolver().openOutputStream(uri);
+            if (out == null) throw new IOException("无法打开输出流");
+            FileInputStream in = new FileInputStream(file);
+            try {
+                byte[] buffer = new byte[64 * 1024];
+                int read;
+                while ((read = in.read(buffer)) > 0) out.write(buffer, 0, read);
+                out.flush();
+            } finally {
+                in.close();
+                out.close();
+            }
+            ContentValues done = new ContentValues();
+            done.put(MediaStore.Downloads.IS_PENDING, 0);
+            getContentResolver().update(uri, done, null, null);
+            return uri.toString();
+        }
+
+        private void closeStream() {
+            if (stream != null) {
+                try {
+                    stream.close();
+                } catch (Exception ignored) {
+                }
+                stream = null;
+            }
+        }
+
+        private void cleanup() {
+            closeStream();
+            if (cacheFile != null) {
+                cacheFile.delete();
+                cacheFile = null;
+            }
+        }
+
+        private String sanitize(String value) {
+            if (value == null || value.length() == 0) return "fit-motion.mp4";
+            return value.replaceAll("[\\\\/:*?\"<>|\\r\\n]", "_");
+        }
+    }
+
+    private void openSavePicker() {
+        if (pendingSaveFile == null) return;
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType(pendingSaveMime == null ? "video/mp4" : pendingSaveMime);
+        intent.putExtra(Intent.EXTRA_TITLE, pendingSaveName);
+        try {
+            startActivityForResult(intent, REQUEST_SAVE);
+        } catch (ActivityNotFoundException error) {
+            Toast.makeText(this, "没有找到文件保存器，请在系统文件管理器中重试", Toast.LENGTH_LONG).show();
+            if (pendingSaveFile != null) pendingSaveFile.delete();
+            pendingSaveFile = null;
+        }
+    }
+}

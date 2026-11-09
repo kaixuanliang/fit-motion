@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FitMotion 更新下载</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(160deg, #0f172a 0%, #1e293b 60%, #134e4a 100%);
+    color: #f1f5f9;
+    padding: 24px;
+  }
+  .card {
+    max-width: 420px;
+    width: 100%;
+    background: rgba(255,255,255,.06);
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: 20px;
+    padding: 36px 28px;
+    text-align: center;
+    backdrop-filter: blur(12px);
+  }
+  .logo { font-size: 44px; }
+  h1 { font-size: 24px; margin: 12px 0 6px; }
+  .sub { color: #94a3b8; font-size: 14px; margin-bottom: 24px; }
+  .btn {
+    display: block;
+    background: linear-gradient(90deg, #10b981, #14b8a6);
+    color: #052e2b;
+    font-size: 18px;
+    font-weight: 700;
+    text-decoration: none;
+    padding: 16px;
+    border-radius: 14px;
+    margin-bottom: 18px;
+  }
+  .btn:active { opacity: .85; }
+  ul { list-style: none; text-align: left; font-size: 14px; color: #cbd5e1; line-height: 2; }
+  ul li::before { content: "✓ "; color: #10b981; font-weight: 700; }
+  .meta { margin-top: 20px; font-size: 12px; color: #64748b; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">🏃</div>
+  <h1>FitMotion 更新包</h1>
+  <p class="sub">与旧版签名一致，可直接覆盖安装</p>
+  <a class="btn" href="FitMotion.apk" download="FitMotion.apk">⬇ 下载 APK（1.12 MB）</a>
+  <ul>
+    <li>修复瓦片缓存到 85% 时页面卡死</li>
+    <li>修复创作页选曲 / 更换音乐卡死</li>
+    <li>倍速只加速画面，背景音乐保持原速</li>
+    <li>预览与导出行为一致，音画同步</li>
+  </ul>
+  <p class="meta">构建于 2026-11-06 · 安装时如提示"未知来源"，允许即可</p>
+</div>
+</body>
+</html>

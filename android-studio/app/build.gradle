@@ -1,0 +1,21 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.fitmotion.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.fitmotion.app'
+        minSdk 29
+        targetSdk 30
+        versionCode 1
+        versionName '1.0.0'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}

@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2048" height="2048" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07100f"/>
+      <stop offset="0.55" stop-color="#040a0a"/>
+      <stop offset="1" stop-color="#081311"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="50%" cy="52%" r="52%">
+      <stop offset="0" stop-color="#d8ff3e" stop-opacity="0.10"/>
+      <stop offset="0.55" stop-color="#d8ff3e" stop-opacity="0.03"/>
+      <stop offset="1" stop-color="#d8ff3e" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="96" height="96" patternUnits="userSpaceOnUse">
+      <path d="M96 0H0V96" fill="none" stroke="#1a2b27" stroke-width="1.2" stroke-opacity="0.72"/>
+    </pattern>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="12" result="b"/>
+      <feColorMatrix in="b" type="matrix" values="0 0 0 0 0.85  0 0 0 0 1  0 0 0 0 0.24  0 0 0 0.85 0" result="g"/>
+      <feMerge><feMergeNode in="g"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <clipPath id="round"><circle cx="512" cy="512" r="512"/></clipPath>
+  </defs>
+  <g clip-path="url(#round)">
+    <rect width="1024" height="1024" fill="url(#bg)"/>
+    <rect width="1024" height="1024" fill="url(#halo)"/>
+    <rect width="1024" height="1024" fill="url(#grid)"/>
+    <path d="M0 480H1024M0 960H1024M0 96H1024M0 192H1024M0 288H1024M0 384H1024M0 576H1024M0 672H1024M0 768H1024M0 864H1024M96 0V1024M192 0V1024M288 0V1024M384 0V1024M480 0V1024M576 0V1024M672 0V1024M768 0V1024M864 0V1024M960 0V1024" stroke="#243b35" stroke-width="1.6" stroke-opacity="0.55"/>
+    <g filter="url(#glow)" fill="none" stroke="#d8ff3e" stroke-linecap="round" stroke-linejoin="round">
+      <!-- route trail under the wheels -->
+      <path d="M152 815C270 842 370 835 445 800C520 764 610 742 700 772C785 800 842 803 900 760" stroke="#d8ff3e" stroke-opacity="0.42" stroke-width="9"/>
+      <!-- rear wheel -->
+      <circle cx="300" cy="690" r="112" stroke-width="13"/>
+      <circle cx="300" cy="690" r="100" stroke-opacity="0.30" stroke-width="3"/>
+      <!-- front wheel -->
+      <circle cx="744" cy="690" r="112" stroke-width="13"/>
+      <circle cx="744" cy="690" r="100" stroke-opacity="0.30" stroke-width="3"/>
+      <!-- frame: soft curves and round joins -->
+      <path d="M300 690Q400 704 500 690" stroke-width="16"/>
+      <path d="M500 690Q486 594 462 505" stroke-width="16"/>
+      <path d="M462 505Q382 590 300 690" stroke-width="16"/>
+      <path d="M462 505Q574 486 686 505" stroke-width="16"/>
+      <path d="M686 505Q590 602 500 690" stroke-width="16"/>
+      <path d="M686 505Q710 600 744 690" stroke-width="16"/>
+      <!-- handlebar and saddle -->
+      <path d="M660 505Q690 472 724 492" stroke-width="14"/>
+      <path d="M424 500Q462 486 500 500" stroke-width="14"/>
+      <!-- crank and pedal -->
+      <circle cx="500" cy="690" r="18" stroke-width="10"/>
+      <path d="M500 690Q540 720 580 730" stroke-width="11"/>
+      <!-- rider: helmet, curved torso, arm, legs -->
+      <path d="M522 424Q496 470 468 548" stroke-width="27"/>
+      <path d="M512 452Q584 477 664 505" stroke-width="20"/>
+      <path d="M472 548Q470 620 500 690" stroke-width="25"/>
+      <path d="M472 548Q520 612 562 664Q580 682 606 690" stroke-width="25"/>
+      <!-- shoulder/hip joints -->
+      <circle cx="522" cy="424" r="14" fill="#d8ff3e" stroke="none"/>
+      <circle cx="468" cy="548" r="16" fill="#d8ff3e" stroke="none"/>
+      <circle cx="500" cy="690" r="9" fill="#f4ffe2" stroke="none"/>
+      <circle cx="744" cy="690" r="9" fill="#f4ffe2" stroke="none"/>
+      <circle cx="300" cy="690" r="9" fill="#f4ffe2" stroke="none"/>
+    </g>
+    <!-- helmet, crisp on top of glow -->
+    <circle cx="537" cy="382" r="38" fill="#d8ff3e"/>
+    <path d="M508 371Q536 352 568 368" stroke="#07100f" stroke-width="9" fill="none" stroke-linecap="round"/>
+    <path d="M550 419L568 430" stroke="#d8ff3e" stroke-width="15" stroke-linecap="round"/>
+    <!-- subtle inner rim accents -->
+    <circle cx="300" cy="690" r="112" fill="none" stroke="#eaffb0" stroke-opacity="0.20" stroke-width="2"/>
+    <circle cx="744" cy="690" r="112" fill="none" stroke="#eaffb0" stroke-opacity="0.20" stroke-width="2"/>
+  </g>
+</svg>

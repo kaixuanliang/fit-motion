@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="tech">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#05080a" />
+    <meta name="description" content="把 FIT / GPX / TCX 轨迹变成 1080P 第一视角动态运动短片。" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23071011'/%3E%3Cpath d='M12 45c9-3 10-20 20-20s9 15 20 9' fill='none' stroke='%23d8ff3e' stroke-width='5' stroke-linecap='round'/%3E%3Ccircle cx='52' cy='34' r='5' fill='%23d8ff3e'/%3E%3C/svg%3E" />
+    <title>FIT MOTION · 轨迹影像</title>
+  </head>
+  <body>
+    <svg class="svg-defs" aria-hidden="true">
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4m0 0L7 9m5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-7 7 7-7 7"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z" fill="currentColor"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></symbol>
+      <symbol id="i-replay" viewBox="0 0 24 24"><path d="M4 4v6h6M20 20v-6h-6"/><path d="M20 9A8 8 0 0 0 6.4 6.4L4 10m16 4-2.4 3.6A8 8 0 0 1 4 15"/></symbol>
+      <symbol id="i-expand" viewBox="0 0 24 24"><path d="M9 4H4v5m11-5h5v5M9 20H4v-5m11 5h5v-5"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v12m0 0 5-5m-5 5-5-5M4 20h16"/></symbol>
+      <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 20S4 15 4 9a4 4 0 0 1 8-1 4 4 0 0 1 8 1c0 6-8 11-8 11Z"/></symbol>
+      <symbol id="i-bolt" viewBox="0 0 24 24"><path d="m13 2-9 12h7l-1 8 9-12h-7l1-8Z"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+      <symbol id="i-route" viewBox="0 0 24 24"><circle cx="5" cy="18" r="2"/><circle cx="19" cy="6" r="2"/><path d="M7 18h4a4 4 0 0 0 0-8h2a4 4 0 0 1 0-4h4"/></symbol>
+      <symbol id="i-mountain" viewBox="0 0 24 24"><path d="m3 19 6-11 4 7 2-3 6 7H3Z"/></symbol>
+      <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5m6-7-7 7 7 7"/></symbol>
+      <symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3Z"/></symbol>
+      <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13M10 11v5M14 11v5"/></symbol>
+      <symbol id="i-undo" viewBox="0 0 24 24"><path d="M4 10h9a5 5 0 0 1 0 10H8"/><path d="M8 6l-4 4 4 4"/></symbol>
+      <symbol id="i-list" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></symbol>
+      <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M6.5 18a4 4 0 0 1-.4-8A5.5 5.5 0 0 1 17 9.5a3.8 3.8 0 0 1 .6 7.5"/><path d="M12 12v6"/><path d="M9.5 15.5 12 18l2.5-2.5"/></symbol>
+      <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7.5h9M17.5 7.5H20M4 16.5h4.5M13 16.5h7"/><circle cx="15" cy="7.5" r="2.2"/><circle cx="10.5" cy="16.5" r="2.2"/></symbol>
+    </svg>
+
+    <div class="app" id="app" data-view="records">
+      <main class="app-main" id="app-main">
+
+        <!-- ───────────────────────── 记录 ───────────────────────── -->
+        <section class="pane" data-pane="records" id="records-pane">
+          <div class="pane-head">
+            <h1>记录</h1>
+            <span class="sum" id="records-sum">—</span>
+          </div>
+          <div class="chips" id="chips"></div>
+          <div class="record-list" id="record-list"></div>
+          <div class="list-foot" id="list-foot" hidden>
+            <button class="load-more" id="load-more" type="button">加载更多</button>
+            <span class="list-tip" id="list-tip"></span>
+          </div>
+          <div class="empty-state" id="records-empty" hidden>
+            <div class="empty-mark"><svg viewBox="0 0 44 44"><path d="M10 30c5-2 6-12 12-12s7 9 12 5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></div>
+            <h2>还没有运动记录</h2>
+            <p>导入 FIT / GPX / TCX，或者从华为运动健康的数据副本里批量导入。</p>
+            <button class="cta" type="button" data-goto="import">去导入</button>
+          </div>
+        </section>
+
+        <!-- ───────────────────────── 导入 ───────────────────────── -->
+        <section class="pane" data-pane="import" id="import-pane">
+          <div class="pane-head">
+            <h1>导入</h1>
+            <span class="sum">本地解析 · 文件不上传</span>
+          </div>
+
+          <div class="card dist-card">
+            <div class="dist-head">
+              <p class="card-title">最小导入距离</p>
+              <label class="dist-field">
+                <input id="min-distance" type="number" inputmode="decimal" min="0" max="1000" step="0.5" placeholder="0" aria-label="最小导入距离（公里）" />
+                <span>km</span>
+              </label>
+            </div>
+            <p class="dist-note" id="min-distance-note">低于这个距离的轨迹不导入，避免通勤、买菜记录占满列表。填 0 表示不限。</p>
+          </div>
+
+          <button class="import-card" id="pick-files" type="button">
+            <span class="ic"><svg><use href="#i-upload"/></svg></span>
+            <span class="txt"><b>选择 FIT / GPX / TCX 文件</b><small>可多选 · 单文件 ≤ 80 MB · 自动去重</small></span>
+            <span class="go">选择</span>
+          </button>
+          <input type="file" id="file-input" accept=".fit,.gpx,.tcx,.json,application/octet-stream,application/gpx+xml,application/vnd.garmin.tcx+xml" multiple hidden />
+
+          <button class="import-card merge-entry" id="merge-open" type="button">
+            <span class="ic"><svg><use href="#i-route"/></svg></span>
+            <span class="txt"><b>合并路线</b><small>把被切开的几段拼成一条 · 规则参考华为运动健康</small></span>
+            <span class="go">合并</span>
+          </button>
+
+          <div class="card hw-card">
+            <div class="hw-head"><i class="tag hw">华为</i><b>运动健康数据副本</b></div>
+            <p class="hw-note">官方接口只开放到授权前 1 年，隐私中心的数据副本能拿到 5 年，是旧数据的唯一可靠来源。</p>
+            <ol class="steps">
+              <li><i>1</i><span>运动健康 App → 我的 → 设置 → 问题与建议，说明需要导出最近 5 年的运动数据（约 2 周回复）</span></li>
+              <li><i>2</i><span>到 privacy.consumer.huawei.com 申请「获取您的数据副本」，勾选运动健康</span></li>
+              <li><i>3</i><span>解压下载的压缩包，选里面的 motion path detail data.json</span></li>
+            </ol>
+            <div class="hw-actions">
+              <button class="btn ghost" id="hw-guide" type="button">复制申请话术</button>
+              <button class="btn primary" id="hw-pick" type="button">选择 JSON 文件</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <p class="card-title">去重规则</p>
+            <div class="kv"><span>文件指纹</span><b>整份文件 SHA-256 · 同一文件重复导入直接跳过</b></div>
+            <div class="kv"><span>运动指纹</span><b>开始时间 ±2 分钟 · 时长 · 距离 · 识别手表与码表各记一份</b></div>
+          </div>
+
+          <div class="card" id="recent-card" hidden>
+            <p class="card-title">最近导入</p>
+            <div class="recent-list" id="recent-list"></div>
+          </div>
+        </section>
+
+        <!-- ───────────────────────── 备份 ───────────────────────── -->
+        <section class="pane" data-pane="backup" id="backup-pane">
+          <div class="pane-head">
+            <h1>备份</h1>
+            <span class="sum" id="backup-state">未绑定</span>
+          </div>
+
+          <div class="card prov" data-provider="gitee">
+            <div class="prov-head"><b><i class="dot" id="gitee-dot"></i>Gitee</b><i class="badge" id="gitee-badge">未绑定</i></div>
+            <p class="prov-note">国内访问快 · 完整镜像，与 GitHub 内容一致</p>
+            <div class="bar"><i id="gitee-bar" style="width:0%"></i></div>
+            <div class="target-list" id="gitee-targets" hidden></div>
+            <div class="prov-foot"><span id="gitee-usage">0 MB / 500 MB</span><button class="link" data-bind-add="gitee" type="button" hidden>+ 仓库</button><button class="link" data-bind="gitee" type="button">绑定</button></div>
+          </div>
+
+          <div class="card prov" data-provider="github">
+            <div class="prov-head"><b><i class="dot" id="github-dot"></i>GitHub</b><i class="badge" id="github-badge">未绑定</i></div>
+            <p class="prov-note">海外可达 · 完整镜像，与 Gitee 内容一致</p>
+            <div class="bar"><i id="github-bar" style="width:0%"></i></div>
+            <div class="target-list" id="github-targets" hidden></div>
+            <div class="prov-foot"><span id="github-usage">0 MB / 1 GB</span><button class="link" data-bind-add="github" type="button" hidden>+ 仓库</button><button class="link" data-bind="github" type="button">绑定</button></div>
+          </div>
+
+          <div class="card row-card">
+            <div><b id="pending-count">0 条待备份</b><span id="pending-note">同步按时间戳对账，重复点十次等于点一次</span></div>
+            <button class="btn primary" id="sync-now" type="button" disabled>立即同步</button>
+          </div>
+
+          <div class="card sync-card" id="sync-card" hidden>
+            <div class="sync-head"><b id="sync-line">准备同步…</b><span id="sync-pct">0%</span></div>
+            <div class="bar"><i id="sync-bar" style="width:0%"></i></div>
+            <p class="sync-note" id="sync-note"></p>
+          </div>
+
+          <div class="card">
+            <p class="card-title">读取策略</p>
+            <div class="kv"><span>优先</span><b>国内优先 Gitee，未命中再回源 GitHub</b></div>
+            <div class="kv"><span>超时</span><b>3 秒无响应立刻切换另一端</b></div>
+            <div class="kv"><span>缓存</span><b>下载过的轨迹留在本地 LRU，离线也能打开</b></div>
+            <div class="kv"><span>容量口径</span><b>只算仓库里 fitmotion/ 下的清单与轨迹文件，不含 Git 历史版本</b></div>
+          </div>
+
+          <div class="card">
+            <p class="card-title">本地占用</p>
+            <div class="bar"><i id="local-bar" style="width:0%"></i></div>
+            <div class="kv"><span>已用</span><b id="local-usage">—</b></div>
+            <div class="kv"><span>轨迹缓存上限</span><b id="cache-limit">500 MB</b></div>
+          </div>
+
+          <div class="card">
+            <p class="card-title">空间预算</p>
+            <div class="kv"><span>平均每条</span><b id="budget-avg">—</b></div>
+            <div class="kv"><span>Gitee 余量</span><b id="budget-gitee">—</b></div>
+            <div class="kv"><span>GitHub 余量</span><b id="budget-github">—</b></div>
+            <p class="card-note">按现有记录的平均体积折算。删除只影响当前版本，Git 历史里的旧文件仍占配额。</p>
+          </div>
+
+          <div class="card">
+            <p class="card-title">安全</p>
+            <div class="kv"><span>Token</span><b>只存本机，不随云同步</b></div>
+            <div class="kv"><span>权限</span><b>仓库 Contents 读写，别给全库 Token</b></div>
+            <button class="btn ghost wide" id="export-pack" type="button">导出备份清单（JSON）</button>
+          </div>
+        </section>
+
+        <!-- ───────────────────────── 设置 ───────────────────────── -->
+        <section class="pane" data-pane="settings" id="settings-pane">
+          <div class="pane-head"><h1>设置</h1><span class="sum" id="settings-sub">386 条 · 0 B</span></div>
+
+          <div class="card">
+            <p class="card-title">主题</p>
+            <p class="card-note">界面和视频用同一套色彩，切了就一起换。</p>
+            <div class="theme-grid" id="theme-grid">
+              <button type="button" data-set-theme="tech">科技<small>青黑 · 荧光</small></button>
+              <button type="button" data-set-theme="night">夜间<small>深蓝 · 霓虹</small></button>
+              <button type="button" data-set-theme="bright">明亮<small>暖白 · 湖蓝</small></button>
+            </div>
+          </div>
+
+          <div class="card">
+            <p class="card-title">背景音乐</p>
+            <div class="kv"><span>当前</span><b id="set-music">无音乐</b></div>
+            <div class="kv"><span>导出</span><b>AAC 音轨 · 结尾 0.5 秒淡出</b></div>
+            <button class="btn ghost wide" id="set-music-btn" type="button">更换背景音乐</button>
+          </div>
+
+          <div class="card">
+            <p class="card-title">存储</p>
+            <div class="kv"><span>记录</span><b id="set-total">0 条</b></div>
+            <div class="kv"><span>地图缓存</span><b id="set-cache">—</b></div>
+            <div class="kv"><span>回收站</span><b id="set-trash">空</b></div>
+            <button class="btn ghost wide" id="set-clear-cache" type="button">清除地图缓存</button>
+            <button class="btn ghost wide" id="set-open-trash" type="button">最近删除</button>
+          </div>
+
+          <div class="card">
+            <p class="card-title">关于</p>
+            <div class="kv"><span>版本</span><b>FitMotion 1.1</b></div>
+            <div class="kv"><span>解析</span><b>FIT / GPX / TCX / 华为 JSON · 全本地</b></div>
+          </div>
+        </section>
+
+        <!-- ───────────────────────── 创作 ───────────────────────── -->
+        <section class="pane pane-create" data-pane="create" id="studio">
+          <div class="create-top">
+            <button class="icon-btn" id="back-btn" type="button" aria-label="返回"><svg><use href="#i-back"/></svg></button>
+            <div class="create-titles">
+              <b id="activity-title">我的骑行</b>
+              <span id="activity-sub">北京 · 2025.11.06</span>
+            </div>
+            <button class="icon-btn" id="change-file" type="button" aria-label="更换记录"><svg><use href="#i-list"/></svg></button>
+          </div>
+
+          <div class="stage-hold" id="stage-hold">
+            <div class="stage-frame" id="stage-frame">
+              <canvas id="stage-ambient" aria-hidden="true"></canvas>
+              <canvas id="stage-canvas" aria-label="动态轨迹视频预览"></canvas>
+              <button class="big-play" id="big-play" type="button" aria-label="播放"><svg><use href="#i-play"/></svg></button>
+              <div class="stage-loading" id="stage-loading"><span class="spinner"></span> 正在准备地图…</div>
+              <span class="stage-badge" id="stage-device">1080P MP4</span>
+              <span class="stage-tc" id="timecode">00:00 / 00:31</span>
+              <div class="seek"><i id="timeline-fill"></i></div>
+
+              <div class="fs-top" id="fs-top">
+                <button class="fs-exit" id="fs-exit" type="button">退出全屏</button>
+                <span class="fs-title" id="fs-title"></span>
+              </div>
+              <div class="fs-bar" id="fs-bar">
+                <div class="fs-line">
+                  <span class="fs-dot"></span>
+                  <span class="fs-song" data-song-name>晨风 · 轻电子</span>
+                  <button class="fs-tag" id="fs-theme-tag" type="button" title="点击切换主题">科技主题</button>
+                  <button class="fs-swap" id="fs-swap" type="button">更换</button>
+                </div>
+                <div class="fs-line2">
+                  <div class="fs-seek" id="fs-seek"><i id="fs-seek-fill"></i></div>
+                  <span class="fs-time" id="fs-time">00:00 / 00:31</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="transport">
+            <button class="icon-btn" id="play-btn" type="button" aria-label="播放/暂停"><svg><use href="#i-play"/></svg></button>
+            <div class="timeline" id="timeline" role="slider" tabindex="0" aria-label="播放进度">
+              <div class="timeline-track"><div class="timeline-thumb" id="timeline-thumb"></div></div>
+            </div>
+            <button class="icon-btn" id="replay-btn" type="button" aria-label="重播"><svg><use href="#i-replay"/></svg></button>
+            <button class="icon-btn" id="fullscreen-btn" type="button" aria-label="全屏播放"><svg><use href="#i-expand"/></svg></button>
+          </div>
+
+          <div class="music-row">
+            <span class="eq" id="music-eq"><i></i><i></i><i></i><i></i></span>
+            <span class="music-name" data-song-name>晨风 · 轻电子</span>
+            <span class="music-note">循环 · 结尾 0.5s 淡出</span>
+            <button class="link" id="swap-music" type="button">更换</button>
+          </div>
+
+          <div class="metric-grid">
+            <article class="metric-card"><span class="mi"><svg><use href="#i-heart"/></svg></span><small>最高心率</small><div><b id="max-hr">--</b><em>次/分</em></div></article>
+            <article class="metric-card"><span class="mi"><svg><use href="#i-bolt"/></svg></span><small>最快速度</small><div><b id="max-speed">--</b><em>km/h</em></div></article>
+            <article class="metric-card"><span class="mi"><svg><use href="#i-route"/></svg></span><small>总距离</small><div><b id="total-distance">--</b><em>公里</em></div></article>
+            <article class="metric-card"><span class="mi"><svg><use href="#i-clock"/></svg></span><small>运动时长</small><div><b id="total-duration">--</b></div></article>
+          </div>
+
+          <div class="detail-grid">
+            <div><span>平均心率</span><b id="avg-hr">--</b></div>
+            <div><span>平均速度</span><b id="avg-speed">--</b></div>
+            <div><span>最高海拔</span><b id="max-altitude">--</b></div>
+            <div><span>消耗热量</span><b id="calories">--</b></div>
+          </div>
+
+          <div class="export-speed-card" id="export-speed-card">
+            <div class="es-head">
+              <span class="es-title">导出倍速</span>
+              <span class="es-est" id="es-est">成片约 --</span>
+            </div>
+            <div class="es-seg" id="es-seg">
+              <button type="button" data-es="1" class="active">1×</button>
+              <button type="button" data-es="2">2×</button>
+              <button type="button" data-es="3">3×</button>
+              <button type="button" data-es="4">4×</button>
+              <button type="button" data-es="5">5×</button>
+            </div>
+            <p class="es-note">画面加速压缩时长，背景音乐保持原速</p>
+          </div>
+
+          <button class="cta" id="export-btn" type="button"><svg><use href="#i-download"/></svg> 导出 1080P MP4</button>
+          <p class="cta-note" id="export-help">1080 × 1920 · 30FPS · MP4<br />导出完成自动存入手机相册</p>
+
+          <div class="sub-actions">
+            <button class="sub" id="native-preview-btn" type="button" hidden>静帧预览</button>
+            <button class="sub" id="export-track-gpx" type="button">导出 GPX</button>
+            <button class="sub" id="export-track-tcx" type="button">导出 TCX</button>
+            <button class="sub" id="stats-image-btn" type="button">数据长图</button>
+            <button class="sub" id="clear-cache" type="button">清地图缓存</button>
+          </div>
+
+          <details class="split-panel">
+            <summary>分段数据 <span id="split-caption">每 1 KM</span></summary>
+            <div class="splits" id="splits"></div>
+          </details>
+
+          <div class="file-strip">
+            <i class="tag" id="file-badge">FIT</i>
+            <span id="file-name">city_ride.fit</span>
+            <span id="file-meta">3,846 个轨迹点</span>
+          </div>
+        </section>
+
+      </main>
+
+      <nav class="tabbar" id="tabbar">
+        <button class="tab on" data-tab="records" type="button"><svg><use href="#i-list"/></svg><span>记录</span></button>
+        <button class="tab" data-tab="import" type="button"><svg><use href="#i-upload"/></svg><span>导入</span></button>
+        <button class="tab" data-tab="backup" type="button"><svg><use href="#i-cloud"/></svg><span>备份</span></button>
+        <button class="tab" data-tab="settings" type="button"><svg><use href="#i-sliders"/></svg><span>设置</span></button>
+      </nav>
+    </div>
+
+    <div class="toast" id="toast" role="status"><span id="toast-text"></span><button class="toast-act" id="toast-act" type="button" hidden>撤销</button></div>
+
+    <div class="music-sheet" id="music-sheet">
+      <div class="music-sheet-mask" id="music-sheet-mask"></div>
+      <div class="music-sheet-panel">
+        <h3>选择背景音乐</h3>
+        <p class="music-sheet-note">内置曲由合成器实时生成；也可以选手机里的 mp3 / flac 当背景音乐，导出时自动混入。</p>
+        <div id="music-list"></div>
+      </div>
+    </div>
+
+    <div class="music-sheet" id="theme-sheet">
+      <div class="music-sheet-mask" id="theme-sheet-mask"></div>
+      <div class="music-sheet-panel">
+        <h3>选择视频主题</h3>
+        <p class="music-sheet-note">主题决定地图配色与海报风格，切换后预览和导出立即生效。</p>
+        <div id="theme-list"></div>
+      </div>
+    </div>
+
+    <div class="import-overlay" id="import-overlay" hidden>
+      <div class="import-modal" role="dialog" aria-modal="true">
+        <div class="import-icon"><span class="spinner"></span></div>
+        <h3 id="import-title">正在导入</h3>
+        <p id="import-status">准备中…</p>
+        <div class="import-progress"><i id="import-progress-fill"></i></div>
+        <pre class="import-report" id="import-report" hidden></pre>
+        <button class="import-close" id="import-close" type="button">关闭</button>
+        <span class="import-auto" id="import-auto" hidden></span>
+      </div>
+    </div>
+
+    <div class="import-overlay merge-overlay" id="merge-overlay" hidden>
+      <div class="import-modal merge-modal" role="dialog" aria-modal="true" aria-labelledby="merge-title">
+        <header class="merge-head">
+          <h3 id="merge-title">合并路线</h3>
+          <p id="merge-sub">勾选 2 条以上同类型记录，按开始时间先后拼接成一条。</p>
+        </header>
+        <div class="merge-list" id="merge-list"></div>
+        <p class="merge-hint" id="merge-hint">还没有可合并的记录</p>
+        <div class="merge-actions">
+          <button class="btn ghost" id="merge-cancel" type="button">取消</button>
+          <button class="btn primary" id="merge-confirm" type="button" disabled>开始合并</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="import-overlay merge-overlay" id="trash-overlay" hidden>
+      <div class="import-modal merge-modal" role="dialog" aria-modal="true" aria-labelledby="trash-title">
+        <header class="merge-head">
+          <h3 id="trash-title">最近删除</h3>
+          <p id="trash-sub">删除的记录会在这里保留 30 天，期间可以恢复。</p>
+        </header>
+        <div class="merge-list" id="trash-list"></div>
+        <p class="merge-hint" id="trash-hint"></p>
+        <div class="merge-actions">
+          <button class="btn ghost" id="trash-clear" type="button">清空</button>
+          <button class="btn primary" id="trash-done" type="button">完成</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="export-overlay" id="export-overlay" hidden>
+      <div class="export-modal">
+        <div class="export-ring" id="export-ring"><span></span></div>
+        <div class="eyebrow small" id="export-eyebrow"><span class="eyebrow-line"></span> RENDERING</div>
+        <h3 id="export-title">正在生成你的轨迹短片</h3>
+        <p id="export-status">准备 1080P 画布…</p>
+        <div class="export-progress" id="export-progress-box"><div id="export-progress-fill"></div></div>
+        <pre class="export-report" id="export-report" hidden></pre>
+        <small id="export-hint">请保持页面在前台，导出完成后会自动保存。</small>
+        <button class="text-btn" id="cancel-export" type="button">取消</button>
+      </div>
+    </div>
+
+    <div class="cache-confirm-overlay" id="clear-cache-modal" hidden>
+      <div class="cache-confirm-card" role="dialog" aria-modal="true" aria-labelledby="clear-cache-title">
+        <div class="cache-confirm-icon"><svg><use href="#i-route"/></svg></div>
+        <div class="eyebrow small"><span class="eyebrow-line"></span> MAP CACHE</div>
+        <h3 id="clear-cache-title">清除地图缓存？</h3>
+        <p>会删除所有已缓存的总览地图和第一视角矢量瓦片，并重新联网缓存当前路线。</p>
+        <div class="cache-confirm-actions">
+          <button class="cache-confirm-cancel" id="clear-cache-cancel" type="button">取消</button>
+          <button class="cache-confirm-ok" id="clear-cache-confirm" type="button">清除并重新缓存</button>
+        </div>
+      </div>
+    </div>
+
+    <button id="native-export-btn" hidden type="button">原生导出</button>
+    <a id="browser-save-prompt" hidden>保存</a>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

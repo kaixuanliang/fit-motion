@@ -1,0 +1,1185 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="tech">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>FitMotion 原型 · 记录库 / 导入 / 备份 / 设置</title>
+<style>
+:root{
+  --bg:#0B0D10;--surface:#11141A;--card:#171B21;--line:rgba(255,255,255,.08);
+  --line-strong:rgba(255,255,255,.14);
+  --text:#F2F5F3;--muted:#8B948F;--dim:#5F6A66;
+  --accent:#B4E64A;--accent-ink:#101408;--accent-soft:rgba(180,230,74,.10);
+  --accent-line:rgba(180,230,74,.35);
+  --warn:#EF9F27;--warn-soft:rgba(239,159,39,.10);--warn-line:rgba(239,159,39,.32);
+  --page:#14161A;--shadow:rgba(0,0,0,.5);
+}
+:root[data-theme="night"]{
+  --bg:#06090F;--surface:#0C1119;--card:#121A26;--line:rgba(255,255,255,.07);
+  --line-strong:rgba(255,255,255,.13);
+  --text:#E9EEF8;--muted:#7C8AA0;--dim:#556179;
+  --accent:#7EA6FF;--accent-ink:#07101F;--accent-soft:rgba(126,166,255,.12);
+  --accent-line:rgba(126,166,255,.38);
+  --warn:#E0A458;--warn-soft:rgba(224,164,88,.10);--warn-line:rgba(224,164,88,.32);
+  --page:#04060A;
+}
+:root[data-theme="light"]{
+  --bg:#F2F4EF;--surface:#FFFFFF;--card:#FFFFFF;--line:rgba(0,0,0,.09);
+  --line-strong:rgba(0,0,0,.16);
+  --text:#191C1A;--muted:#68736D;--dim:#9AA49E;
+  --accent:#5E8C18;--accent-ink:#FFFFFF;--accent-soft:rgba(94,140,24,.09);
+  --accent-line:rgba(94,140,24,.34);
+  --warn:#B4700F;--warn-soft:rgba(180,112,15,.09);--warn-line:rgba(180,112,15,.30);
+  --page:#E4E7E0;--shadow:rgba(24,30,26,.16);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  background:var(--page);display:flex;align-items:center;justify-content:center;gap:40px;
+  padding:26px;transition:background .35s ease;color:var(--text);
+}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer;padding:0}
+.phone{width:390px;flex:0 0 auto;height:844px;border-radius:46px;background:#06070A;padding:10px;box-shadow:0 34px 70px var(--shadow);position:relative}
+:root[data-theme="light"] .phone{background:#1D2320}
+.screen{width:100%;height:100%;border-radius:37px;background:var(--bg);overflow:hidden;position:relative;display:flex;flex-direction:column;transition:background .35s ease}
+.sb{height:34px;display:flex;align-items:center;justify-content:space-between;padding:0 22px;font-size:11px;color:var(--muted);flex:0 0 auto}
+.sb .dots{display:flex;gap:4px;align-items:center}
+.sb .dot{width:5px;height:5px;border-radius:50%;background:var(--dim)}
+.views{flex:1;position:relative;overflow:hidden}
+.view{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;padding:2px 15px 14px;display:none;flex-direction:column;gap:9px}
+.view.active{display:flex}
+.view::-webkit-scrollbar{width:0}
+.vhead{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:2px 1px 2px}
+.vhead h1{margin:0;font-size:19px;font-weight:500;letter-spacing:.2px}
+.vhead .sub{font-size:11px;color:var(--dim)}
+.chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;flex:0 0 auto}
+.chips::-webkit-scrollbar{height:0}
+.chip{flex:0 0 auto;font-size:11.5px;color:var(--muted);border:0.5px solid var(--line-strong);border-radius:20px;padding:5px 11px;transition:all .18s}
+.chip.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.list{display:flex;flex-direction:column;gap:7px}
+.rec{display:flex;align-items:center;gap:10px;background:var(--card);border:0.5px solid transparent;border-radius:11px;padding:8px;text-align:left;transition:border-color .18s,transform .12s}
+.rec:active{transform:scale(.985)}
+.rec.hit{border-color:var(--accent-line)}
+.thumb{width:44px;height:44px;border-radius:9px;background:var(--surface);flex:0 0 auto;display:block}
+:root[data-theme="light"] .thumb{background:#F0F2EC}
+.rec .main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.rec .top{display:flex;align-items:center;gap:5px}
+.rec .top b{font-size:12.5px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tag{font-size:9.5px;line-height:1;padding:2px 4px;border-radius:4px;border:0.5px solid;letter-spacing:.2px;flex:0 0 auto}
+.tag.fit{color:var(--muted);border-color:var(--line-strong)}
+.tag.hw{color:var(--warn);border-color:var(--warn-line)}
+.tag.gpx{color:var(--dim);border-color:var(--line)}
+.rec .meta{font-size:10.8px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.state{font-size:9.5px;color:var(--dim);flex:0 0 auto;display:flex;align-items:center;gap:3px}
+.state .pip{width:5px;height:5px;border-radius:50%;background:var(--dim)}
+.state.both{color:var(--accent)}.state.both .pip{background:var(--accent)}
+.state.one{color:var(--muted)}.state.one .pip{background:var(--muted)}
+.state.wait .pip{background:var(--warn)}.state.wait{color:var(--warn)}
+.listfoot{display:flex;flex-direction:column;align-items:center;gap:5px;padding:4px 0 8px}
+.btn{height:34px;border-radius:9px;border:0.5px solid var(--line-strong);display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--text);width:100%;transition:background .18s}
+.btn:active{background:var(--accent-soft)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:500}
+.btn.soft{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.btn.tiny{height:28px;font-size:11px;width:auto;padding:0 10px}
+.hint{font-size:10px;color:var(--dim);text-align:center;margin:0}
+.tabbar{flex:0 0 auto;height:60px;display:grid;grid-template-columns:repeat(4,1fr);border-top:0.5px solid var(--line);padding-bottom:6px;background:var(--bg);transition:background .35s}
+.tab{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:10px;color:var(--dim)}
+.tab.on{color:var(--accent)}
+.tab svg{width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.card{background:var(--card);border:0.5px solid var(--line);border-radius:12px;padding:11px}
+.sec-title{font-size:11px;color:var(--dim);letter-spacing:.4px;margin:4px 1px -2px}
+.row{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.row .grow{flex:1;min-width:0}
+.k{font-size:12px;color:var(--text)}
+.v{font-size:11px;color:var(--dim)}
+.bar{height:5px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:7px}
+.bar i{display:block;height:100%;border-radius:3px;background:var(--accent)}
+.bar i.warn{background:var(--warn)}
+.metric{background:var(--surface);border-radius:10px;padding:8px 10px}
+.metric .lb{font-size:10.5px;color:var(--dim)}
+.metric .nm{font-size:16px;color:var(--text);font-weight:500;letter-spacing:.2px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px}
+.create-head{display:flex;align-items:center;gap:8px;padding:2px 0}
+.create-head .back{font-size:20px;line-height:1;color:var(--muted);width:22px}
+.create-head .title{flex:1;font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stagewrap{position:relative;height:186px;border-radius:13px;background:#06080B;border:0.5px solid var(--line);overflow:hidden;flex:0 0 auto}
+.view[data-view="create"] .stagewrap{height:auto;min-height:172px;flex:1 1 auto}
+.stagewrap canvas{display:block;width:100%;height:100%}
+.stagewrap .badge{position:absolute;left:9px;top:9px;font-size:10px;color:var(--muted);background:rgba(0,0,0,.42);padding:3px 7px;border-radius:6px}
+.playbtn{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:38px;height:38px;border-radius:50%;background:rgba(0,0,0,.45);border:0.5px solid rgba(255,255,255,.26);display:flex;align-items:center;justify-content:center}
+.playbtn .tri{width:0;height:0;border-left:9px solid #F2F5F3;border-top:6px solid transparent;border-bottom:6px solid transparent;margin-left:3px}
+.playbtn .pause{display:flex;gap:3px}
+.playbtn .pause i{width:3px;height:12px;background:#F2F5F3;border-radius:1px;display:block}
+.seek{position:absolute;left:0;right:0;bottom:0;height:2px;background:rgba(255,255,255,.14)}
+.seek i{display:block;height:100%;width:0;background:var(--accent)}
+.tc{position:absolute;right:9px;bottom:8px;font-size:10px;color:#B8C2BE}
+.music{display:flex;align-items:center;gap:9px;height:44px;border-radius:10px;background:var(--warn-soft);border:0.5px solid var(--warn-line);padding:0 10px;flex:0 0 auto}
+.eq{display:flex;align-items:flex-end;gap:2px;height:14px;flex:0 0 auto}
+.eq i{width:2px;background:var(--warn);border-radius:1px;height:4px;transition:height .12s}
+.music .nm{font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.music .sb2{font-size:10px;color:var(--warn)}
+.music .swap{font-size:10.5px;color:var(--warn);border:0.5px solid var(--warn-line);border-radius:6px;padding:3px 7px;flex:0 0 auto}
+.cta{height:46px;border-radius:11px;background:var(--accent);color:var(--accent-ink);display:flex;align-items:center;justify-content:center;font-size:13.5px;font-weight:500;flex:0 0 auto}
+.cta:active{opacity:.9}
+.cta-note{text-align:center;font-size:10px;color:var(--dim);margin:-4px 0 0}
+.divider{height:0.5px;background:var(--line);margin:1px 0}
+.segbar{display:flex;gap:3px;height:6px;margin-top:9px}
+.segbar i{display:block;border-radius:2px}
+.seglegend{display:flex;margin-top:6px;font-size:9.5px;color:var(--dim)}
+.seglegend span{text-align:center;white-space:nowrap;overflow:hidden}
+.rec-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto}
+.mini-create{height:32px;padding:0 11px;border-radius:8px;background:var(--accent-soft);border:0.5px solid var(--accent-line);color:var(--accent);font-size:10.5px;font-weight:500;display:flex;align-items:center;gap:4px;flex:0 0 auto;transition:opacity .16s}
+.mini-create:active{opacity:.68}
+.mini-create svg{width:9px;height:9px;stroke:currentColor;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;display:block}
+.rec .main .state{margin-top:1px}
+.fsbtn{position:absolute;right:8px;top:8px;width:26px;height:26px;border-radius:7px;background:rgba(0,0,0,.42);border:0.5px solid rgba(255,255,255,.22);display:flex;align-items:center;justify-content:center;z-index:6}
+.fsbtn svg{width:11px;height:11px;stroke:#DDE5E1;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;display:block}
+.fsbtn:active{opacity:.66}
+.fs-top,.fs-bar{display:none}
+#v-create.fs{padding:0;gap:0}
+#v-create.fs .create-head,#v-create.fs .music,#v-create.fs .grid2,#v-create.fs .card,#v-create.fs .cta,#v-create.fs .cta-note,#v-create.fs .grid3,#v-create.fs .divider,#v-create.fs .filerow{display:none}
+#v-create.fs .stagewrap{border:0;border-radius:0;min-height:0;flex:1 1 auto}
+#v-create.fs .badge,#v-create.fs .fsbtn,#v-create.fs .seek,#v-create.fs .tc{display:none}
+#v-create.fs .playbtn{width:54px;height:54px;background:rgba(0,0,0,.38)}
+#v-create.fs .playbtn .tri{border-left-width:13px;border-top-width:8.5px;border-bottom-width:8.5px}
+#v-create.fs .playbtn .pause i{width:4px;height:16px}
+#v-create.fs .fs-top{position:absolute;left:0;right:0;top:0;height:54px;display:flex;align-items:center;gap:10px;padding:0 13px;background:linear-gradient(rgba(6,8,10,.62),rgba(6,8,10,0));z-index:7}
+.fs-exit{font-size:10.5px;color:#EDF2EF;border:0.5px solid rgba(255,255,255,.34);border-radius:7px;padding:4px 9px;flex:0 0 auto;background:rgba(0,0,0,.28)}
+.fs-exit:active{opacity:.66}
+.fs-title{flex:1;font-size:12px;color:#EDF2EF;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#v-create.fs .fs-bar{position:absolute;left:0;right:0;bottom:0;display:flex;flex-direction:column;gap:10px;padding:18px 14px 20px;background:linear-gradient(rgba(6,8,10,0),rgba(6,8,10,.9));z-index:7}
+.fs-line{display:flex;align-items:center;gap:8px}
+.fs-dot{width:5px;height:5px;border-radius:50%;background:var(--accent);flex:0 0 auto}
+.fs-song{font-size:11.5px;color:#D7DEDA;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fs-tag{font-size:9.5px;color:#9BA6A1;border:0.5px solid rgba(255,255,255,.18);border-radius:5px;padding:2px 5px;flex:0 0 auto}
+.fs-swap{font-size:10.5px;color:var(--accent);border:0.5px solid var(--accent-line);border-radius:6px;padding:3px 8px;flex:0 0 auto}
+.fs-line2{display:flex;align-items:center;gap:9px}
+.fs-seek{flex:1;height:3px;border-radius:2px;background:rgba(255,255,255,.2);overflow:hidden;cursor:pointer}
+.fs-seek i{display:block;height:100%;width:0;background:var(--accent)}
+.fs-time{font-size:9.5px;color:#9BA6A1;flex:0 0 auto;font-variant-numeric:tabular-nums}
+.screen.fs-on .sb{display:none}
+.is-tri{width:0;height:0;border-left:8px solid #F2F5F3;border-top:5.5px solid transparent;border-bottom:5.5px solid transparent;margin-left:2px;display:block}
+.is-pause{display:flex;gap:3px}
+.is-pause i{width:3px;height:11px;background:#F2F5F3;border-radius:1px;display:block}
+.filerow{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.track-out span{font-size:10.5px;color:var(--muted);border:0.5px solid var(--line-strong);border-radius:6px;padding:3px 8px}
+.importcard{display:flex;align-items:center;gap:11px;background:var(--card);border:0.5px solid var(--line);border-radius:12px;padding:13px 12px;text-align:left;width:100%}
+.impicon{width:36px;height:36px;border-radius:10px;background:var(--accent-soft);display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+.impicon svg{width:19px;height:19px;stroke:var(--accent);fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.importcard .t{font-size:13px;color:var(--text);display:block}
+.importcard .d{font-size:10.5px;color:var(--dim);margin-top:3px;line-height:1.45;display:block}
+.improw{display:flex;align-items:center;gap:8px;padding:8px 0;border-top:0.5px solid var(--line)}
+.improw:first-child{border-top:none;padding-top:2px}
+.improw .nm{flex:1;min-width:0;font-size:11.5px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.improw .st2{font-size:10.5px;color:var(--accent);flex:0 0 auto}
+.improw .st2.dup{color:var(--warn)}
+.improw .tm2{font-size:10px;color:var(--dim);flex:0 0 auto;width:52px;text-align:right}
+.sw{width:34px;height:20px;border-radius:10px;background:var(--line-strong);position:relative;transition:background .2s;flex:0 0 auto}
+.sw i{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:left .2s;display:block}
+.sw.on{background:var(--accent)}
+.sw.on i{left:16px}
+.steps{display:flex;flex-direction:column;gap:8px}
+.step{display:flex;gap:9px;align-items:flex-start}
+.step .n{width:17px;height:17px;border-radius:50%;background:var(--accent-soft);color:var(--accent);font-size:10px;display:flex;align-items:center;justify-content:center;flex:0 0 auto;margin-top:1px}
+.step .tx{font-size:11.5px;color:var(--muted);line-height:1.55}
+.dupe{color:var(--warn);font-size:10.5px;display:flex;align-items:center;gap:5px}
+.toast{position:absolute;left:50%;bottom:78px;transform:translate(-50%,10px);background:rgba(10,12,14,.92);color:#F2F5F3;font-size:11.5px;padding:8px 14px;border-radius:20px;opacity:0;pointer-events:none;transition:all .25s;white-space:nowrap;max-width:86%;overflow:hidden;text-overflow:ellipsis;border:0.5px solid rgba(255,255,255,.14);z-index:40}
+.toast.on{opacity:1;transform:translate(-50%,0)}
+.sheet{position:absolute;inset:0;z-index:50;display:none}
+.sheet.on{display:block}
+.sheet .mask{position:absolute;inset:0;background:rgba(0,0,0,.55)}
+.sheet .panel{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-radius:18px 18px 0 0;padding:14px 14px 18px;display:flex;flex-direction:column;gap:7px;border-top:0.5px solid var(--line)}
+.sheet h3{margin:0 0 3px;font-size:12px;font-weight:500;color:var(--muted);letter-spacing:.3px}
+.song{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:9px;background:var(--card);border:0.5px solid transparent;text-align:left;width:100%}
+.song.on{border-color:var(--accent-line);background:var(--accent-soft)}
+.song .nm{font-size:12px;color:var(--text);flex:1}
+.song .mt{font-size:10px;color:var(--dim)}
+.song .chk{font-size:11px;color:var(--accent)}
+.overlay{position:absolute;inset:0;z-index:60;background:rgba(6,8,10,.86);display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:0 34px}
+.overlay.on{display:flex}
+.overlay .pct{font-size:26px;font-weight:500;color:var(--text)}
+.overlay .st{font-size:11px;color:var(--muted)}
+.overlay .pbar{width:100%;height:4px;border-radius:2px;background:rgba(255,255,255,.12);overflow:hidden}
+.overlay .pbar i{display:block;height:100%;width:0;background:var(--accent)}
+.switchbar{position:absolute;right:26px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:6px;z-index:30}
+.switchbar button{font-size:11px;color:var(--muted);border:0.5px solid var(--line-strong);border-radius:8px;padding:6px 11px;background:var(--surface);transition:all .18s}
+.switchbar button.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.notes{width:250px;flex:0 0 auto;display:flex;flex-direction:column;gap:11px;font-size:11.5px;line-height:1.65;color:var(--muted)}
+.notes h2{font-size:12px;font-weight:500;color:var(--text);margin:0 0 5px}
+.notes .ncard{background:var(--surface);border:0.5px solid var(--line);border-radius:11px;padding:11px 12px}
+.notes b{color:var(--text);font-weight:500}
+@media (max-width:1080px){.notes{display:none}.switchbar{right:12px;top:12px;transform:none;flex-direction:row}}
+@media (max-width:520px){
+  body{padding:0;display:block}
+  .phone{width:100%;height:100svh;height:100vh;border-radius:0;padding:0;box-shadow:none}
+  .screen{border-radius:0}
+  .switchbar{right:10px;top:10px;transform:none;flex-direction:row}
+  .switchbar button{padding:5px 9px;font-size:10.5px}
+}
+</style>
+</head>
+<body data-theme="tech">
+
+<div class="phone">
+  <div class="screen" id="screen">
+    <div class="sb"><span>9:41</span><span class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span>1080p</span></span></div>
+
+    <div class="views">
+
+      <section class="view active" data-view="records" id="v-records">
+        <div class="vhead"><h1>记录</h1><span class="sub" id="recSum">386 条 · 21,480 km</span></div>
+        <div class="chips" id="chips"></div>
+        <div class="list" id="list"></div>
+        <div class="listfoot" id="listfoot">
+          <button class="btn" id="loadMore">加载更多 · 已显示 20</button>
+          <p class="hint">滚到底部自动加载，每页 20 条</p>
+        </div>
+      </section>
+
+      <section class="view" data-view="import" id="v-import">
+        <div class="vhead"><h1>导入</h1><span class="sub">三种来源同一条管道</span></div>
+
+        <button class="importcard" id="pickFile">
+          <span class="impicon"><svg viewBox="0 0 24 24"><path d="M12 16V4"/><path d="M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg></span>
+          <span class="grow">
+            <span class="t">选择文件</span>
+            <span class="d">FIT / GPX / TCX，支持多选；重复文件会自动识别</span>
+          </span>
+        </button>
+        <input type="file" id="fileInput" accept=".fit,.gpx,.tcx" multiple hidden>
+
+        <div class="card">
+          <div class="row" style="margin-bottom:10px">
+            <span class="impicon" style="background:var(--warn-soft)"><svg viewBox="0 0 24 24" style="stroke:var(--warn)"><rect x="5" y="2.5" width="14" height="19" rx="3"/><path d="M10 19h4"/></svg></span>
+            <span class="grow"><span class="t" style="font-size:13px">华为运动健康</span><br><span class="d" style="font-size:10.5px;color:var(--dim)">一次导入多年历史，5 年数据约 300 条</span></span>
+          </div>
+          <div class="steps">
+            <div class="step"><span class="n">1</span><span class="tx">运动健康 → 我的 → 问题与建议，申请导出近 5 年数据</span></div>
+            <div class="step"><span class="n">2</span><span class="tx">收到「数据副本」短信后，在隐私中心下载压缩包</span></div>
+            <div class="step"><span class="n">3</span><span class="tx">回来点这里选择 <b>motion path detail data.json</b>，批量解析入库</span></div>
+          </div>
+          <div style="display:flex;gap:7px;margin-top:10px">
+            <button class="btn soft tiny" style="flex:1" id="hwImport">模拟导入 100 条</button>
+            <button class="btn tiny" style="flex:1" id="hwGuide">查看图文引导</button>
+          </div>
+          <div class="bar" id="hwBar" style="display:none"><i id="hwFill" style="width:0"></i></div>
+        </div>
+
+        <p class="sec-title">去重规则</p>
+        <div class="card" style="display:flex;flex-direction:column;gap:7px">
+          <div class="row"><span class="grow k" style="font-size:11.5px">文件指纹</span><span class="v">同名同内容 → 直接跳过</span></div>
+          <div class="row"><span class="grow k" style="font-size:11.5px">运动指纹</span><span class="v">时间 ±2 分 · 时长 · 距离</span></div>
+          <p class="hint" style="text-align:left;line-height:1.55">同一趟骑行既有华为记录又有码表 FIT 时，运动指纹会提示「可能重复」，但由你决定是否两条都留。</p>
+        </div>
+        <p class="sec-title">最近导入</p>
+        <div class="card" id="recentImports">
+          <div class="improw"><span class="nm">11.fit</span><span class="st2">新增 · FIT</span><span class="tm2">3 秒前</span></div>
+          <div class="improw"><span class="nm">2026-10-28-环城.fit</span><span class="st2">新增 · FIT</span><span class="tm2">1 分钟前</span></div>
+          <div class="improw"><span class="nm">11.fit</span><span class="st2 dup">重复跳过</span><span class="tm2">5 分钟前</span></div>
+          <div class="improw"><span class="nm">motion path detail data.json</span><span class="st2">新增 87 · 华为</span><span class="tm2">10 分钟前</span></div>
+        </div>
+      </section>
+
+      <section class="view" data-view="backup" id="v-backup">
+        <div class="vhead"><h1>备份</h1><span class="sub" id="bkState">已同步 · 2 分钟前</span></div>
+
+        <div class="card">
+          <div class="row"><span class="grow"><span class="k">Gitee · 热数据</span><br><span class="v">规范化轨迹，国内优先读取</span></span><span class="v">128 / 500 MB</span></div>
+          <div class="bar"><i style="width:26%"></i></div>
+        </div>
+        <div class="card">
+          <div class="row"><span class="grow"><span class="k">GitHub · 原件仓库</span><br><span class="v">FIT / GPX / TCX 原始文件</span></span><span class="v">96 / 1024 MB</span></div>
+          <div class="bar"><i style="width:9%"></i></div>
+        </div>
+
+        <div class="card">
+          <div class="row"><span class="grow"><span class="k">待备份 3 条</span><br><span class="v">导入后自动入队，App 被杀也不丢</span></span><button class="btn tiny soft" id="syncNow">立即同步</button></div>
+        </div>
+
+        <p class="sec-title">读取策略</p>
+        <div class="card" style="display:flex;flex-direction:column;gap:7px">
+          <div class="row"><span class="grow k" style="font-size:11.5px">国内优先 Gitee</span><span class="v">首字节通常 &lt; 100ms</span></div>
+          <div class="row"><span class="grow k" style="font-size:11.5px">3 秒无响应切 GitHub</span><span class="v">并缓存 10 分钟</span></div>
+          <div class="row"><span class="grow k" style="font-size:11.5px">打开记录先查本地缓存</span><span class="v">命中即免网络</span></div>
+        </div>
+
+        <p class="sec-title">本地占用</p>
+        <div class="card">
+          <div class="row"><span class="grow k" style="font-size:11.5px">索引 + 缩略图</span><span class="v">1.2 MB</span></div>
+          <div class="row" style="margin-top:6px"><span class="grow k" style="font-size:11.5px">轨迹缓存（LRU）</span><span class="v">86 / 200 MB</span></div>
+          <div class="bar"><i class="warn" style="width:43%"></i></div>
+          <p class="hint" style="text-align:left;margin-top:8px">超过上限自动淘汰最久未用的记录，列表和缩略图不受影响。</p>
+        </div>
+
+        <p class="sec-title">安全</p>
+        <div class="grid2">
+          <button class="btn" id="exportPack">导出加密全量包</button>
+          <button class="btn" id="rebind">重新绑定 Token</button>
+        </div>
+        <p class="hint" style="padding:2px 0 6px">换机恢复约 20 秒：只拉索引与缩略图，轨迹按需取</p>
+      </section>
+
+      <section class="view" data-view="settings" id="v-settings">
+        <div class="vhead"><h1>设置</h1><span class="sub">v0.9 prototype</span></div>
+
+        <p class="sec-title">界面主题</p>
+        <div class="grid3" id="themeGrid">
+          <button class="btn" data-set-theme="tech">科技</button>
+          <button class="btn" data-set-theme="night">夜间</button>
+          <button class="btn" data-set-theme="light">明亮</button>
+        </div>
+        <p class="hint" style="text-align:left;padding:0 1px">界面跟随视频主题，选哪套海报就长哪套颜色</p>
+
+        <p class="sec-title">导出</p>
+        <div class="card" style="display:flex;flex-direction:column;gap:9px">
+          <div class="row"><span class="grow k" style="font-size:12px">背景音乐</span><span class="v" id="setMusic">晨风 · 轻电子</span></div>
+          <div class="divider"></div>
+          <div class="row"><span class="grow k" style="font-size:12px">输出规格</span><span class="v">1080 × 1920 · 30fps</span></div>
+          <div class="divider"></div>
+          <div class="row"><span class="grow k" style="font-size:12px">缓存上限</span><span class="v">200 MB</span></div>
+        </div>
+
+        <p class="sec-title">备份</p>
+        <div class="card" style="display:flex;flex-direction:column;gap:9px">
+          <div class="row"><span class="grow k" style="font-size:12px">导入后自动备份</span><span class="sw on" data-sw="#"><i></i></span></div>
+          <div class="divider"></div>
+          <div class="row"><span class="grow k" style="font-size:12px">仅保留近 1 年原件</span><span class="sw" data-sw="#"><i></i></span></div>
+        </div>
+
+        <p class="sec-title">数据</p>
+        <div class="card" style="display:flex;flex-direction:column;gap:9px">
+          <div class="row"><span class="grow k" style="font-size:12px">记录总数</span><span class="v" id="setTotal">386 条</span></div>
+          <div class="divider"></div>
+          <div class="row"><span class="grow k" style="font-size:12px">清理地图瓦片缓存</span><span class="v">38 MB</span></div>
+          <div class="divider"></div>
+          <div class="row"><span class="grow k" style="font-size:12px">关于 FitMotion</span><span class="v">›</span></div>
+        </div>
+      </section>
+
+      <section class="view" data-view="create" id="v-create">
+        <div class="create-head">
+          <button class="back" id="backBtn">&#8249;</button>
+          <span class="title" id="createTitle">2026-11-04 晨骑</span>
+          <span class="v">&#8943;</span>
+        </div>
+
+        <div class="stagewrap">
+          <canvas id="cv"></canvas>
+          <div class="badge" id="themeBadge">科技主题</div>
+          <button class="fsbtn" id="fsBtn" aria-label="全屏播放">
+            <svg viewBox="0 0 14 14"><path d="M1.7 5.1V1.7h3.4M8.9 1.7h3.4v3.4M12.3 8.9v3.4H8.9M5.1 12.3H1.7V8.9"/></svg>
+          </button>
+          <button class="playbtn" id="playBtn"><span class="tri" id="playIcon"></span></button>
+          <div class="seek"><i id="seekFill" data-seek-fill></i></div>
+          <div class="tc" id="tcode" data-time>00:00 / 00:38</div>
+
+          <div class="fs-top">
+            <button class="fs-exit" id="fsExit">退出全屏</button>
+            <span class="fs-title" id="fsTitle">2026-11-04 通勤</span>
+          </div>
+          <div class="fs-bar">
+            <div class="fs-line">
+              <span class="fs-dot"></span>
+              <span class="fs-song" data-song-name>晨风 · 轻电子</span>
+              <span class="fs-tag" data-theme-tag>科技主题</span>
+              <button class="fs-swap" id="fsSwap">更换</button>
+            </div>
+            <div class="fs-line2">
+              <div class="fs-seek" id="fsSeek"><i id="fsSeekFill" data-seek-fill></i></div>
+              <span class="fs-time" id="fsTime" data-time>00:00 / 00:38</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="music">
+          <div class="eq" id="eq"><i></i><i></i><i></i><i></i></div>
+          <div class="grow" style="min-width:0">
+            <div class="nm" id="musicName" data-song-name>晨风 · 轻电子</div>
+            <div class="sb2">循环 · 结尾 0.5s 淡出</div>
+          </div>
+          <button class="swap" id="swapMusic">更换</button>
+        </div>
+
+        <div class="grid2">
+          <div class="metric"><div class="lb">距离</div><div class="nm">216.4 km</div></div>
+          <div class="metric"><div class="lb">均速</div><div class="nm">32.1 km/h</div></div>
+          <div class="metric"><div class="lb">爬升</div><div class="nm">1,842 m</div></div>
+          <div class="metric"><div class="lb">时长</div><div class="nm">7h 12m</div></div>
+        </div>
+
+        <div class="card" style="padding:9px 11px 8px">
+          <div class="row"><span class="grow k" style="font-size:11.5px">时间线</span><span class="v">38.3 秒 · 1149 帧</span></div>
+          <div class="segbar">
+            <i style="flex:1;background:var(--dim)"></i>
+            <i style="flex:2;background:var(--accent-soft)"></i>
+            <i style="flex:6;background:var(--accent)"></i>
+            <i style="flex:2;background:var(--warn)"></i>
+            <i style="flex:3;background:var(--accent-soft)"></i>
+          </div>
+          <div class="seglegend">
+            <span style="flex:1">封面</span>
+            <span style="flex:2">开场</span>
+            <span style="flex:6">巡航</span>
+            <span style="flex:2">极值</span>
+            <span style="flex:3">尾段</span>
+          </div>
+        </div>
+
+        <button class="cta" id="exportBtn">导出 1080P MP4</button>
+        <div class="cta-note">导出完成自动存入手机相册</div>
+
+        <div class="grid3">
+          <button class="btn" style="font-size:11px" data-toast="静帧预览：已生成当前帧 PNG">静帧预览</button>
+          <button class="btn" style="font-size:11px" data-toast="数据长图：已生成并保存到相册">数据长图</button>
+          <button class="btn" style="font-size:11px" data-toast="地图缓存已清理 · 释放 38 MB">清缓存</button>
+        </div>
+
+        <div class="divider"></div>
+        <div class="filerow track-out">
+          <span style="color:var(--dim)">轨迹导出</span>
+          <button class="btn tiny" data-toast="已导出 GPX">GPX</button>
+          <button class="btn tiny" data-toast="已导出 TCX">TCX</button>
+          <button class="btn tiny" data-toast="已导出 FIT 原件">FIT 原件</button>
+        </div>
+      </section>
+
+    </div>
+
+    <nav class="tabbar" id="tabbar">
+      <button class="tab on" data-tab="records"><svg viewBox="0 0 24 24"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h10"/></svg><span>记录</span></button>
+      <button class="tab" data-tab="import"><svg viewBox="0 0 24 24"><path d="M12 15V3"/><path d="M7 8l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg><span>导入</span></button>
+      <button class="tab" data-tab="backup"><svg viewBox="0 0 24 24"><path d="M6.5 18a4 4 0 0 1-.4-8A5.5 5.5 0 0 1 17 9.5a3.8 3.8 0 0 1 .6 7.5"/><path d="M12 12v6"/><path d="M9.5 15.5 12 18l2.5-2.5"/></svg><span>备份</span></button>
+      <button class="tab" data-tab="settings"><svg viewBox="0 0 24 24"><path d="M4 7.5h9M17.5 7.5H20M4 16.5h4.5M13 16.5h7"/><circle cx="15" cy="7.5" r="2.2"/><circle cx="10.5" cy="16.5" r="2.2"/></svg><span>设置</span></button>
+    </nav>
+
+    <div class="toast" id="toast"></div>
+
+    <div class="sheet" id="sheet">
+      <div class="mask" id="sheetMask"></div>
+      <div class="panel">
+        <h3>选择背景音乐</h3>
+        <button class="song on" data-song="0"><span class="nm">晨风 · 轻电子</span><span class="mt">2:48</span><span class="chk">&#10003;</span></button>
+        <button class="song" data-song="1"><span class="nm">山径 · 钢琴</span><span class="mt">3:12</span><span class="chk"></span></button>
+        <button class="song" data-song="2"><span class="nm">疾驰 · 合成器</span><span class="mt">2:05</span><span class="chk"></span></button>
+        <button class="song" data-song="3"><span class="nm">无音乐</span><span class="mt">静音导出</span><span class="chk"></span></button>
+      </div>
+    </div>
+
+    <div class="overlay" id="overlay">
+      <div class="pct" id="ovPct">0%</div>
+      <div class="pbar"><i id="ovBar"></i></div>
+      <div class="st" id="ovSt">准备中</div>
+    </div>
+
+  </div>
+</div>
+
+<div class="switchbar" id="switchbar">
+  <button data-set-theme="tech" class="on">科技</button>
+  <button data-set-theme="night">夜间</button>
+  <button data-set-theme="light">明亮</button>
+</div>
+
+<aside class="notes">
+  <div class="ncard">
+    <h2>这个原型能点什么</h2>
+    切 tab、切三套主题（界面整体换色）、翻页加载 386 条记录、点任意记录进创作页、试听音乐（合成音占位）、跑一次假导出、模拟华为批量导入、切换背景音乐。
+  </div>
+  <div class="ncard">
+    <h2>三个已定的决策</h2>
+    四个 tab：记录 / 导入 / 备份 / 设置；界面跟随视频主题；记录卡缩略图用<b>路线形状</b>（矢量约 2KB，本地即时生成）。
+  </div>
+  <div class="ncard">
+    <h2>要重点看的两处</h2>
+    一、分页：顶部年份 chip + 滚到底加载，386 条也不会一次渲染。<br>
+    二、音乐：预览播放时音乐跟着<b>视频秒</b>走，暂停即暂停，与导出成品一致。
+  </div>
+</aside>
+
+<script>
+(function(){
+  var root = document.documentElement;
+  var stage = document.body;
+
+  function mulberry32(a){
+    return function(){
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      var t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+
+  function buildShape(seed){
+    var r = mulberry32(seed);
+    var n = 16, pts = [], a, rad;
+    var wob = 0.10 + r() * 0.15;
+    var phase = r() * Math.PI * 2;
+    var squash = 0.62 + r() * 0.34;
+    var rot = r() * Math.PI;
+    for (var i = 0; i <= n; i += 1){
+      a = i / n * Math.PI * 2;
+      rad = 0.5 + Math.sin(a * 2 + phase) * wob + Math.sin(a * 3 + phase * 1.7) * wob * 0.55;
+      var px = Math.cos(a) * rad * 0.46;
+      var py = Math.sin(a) * rad * 0.46 * squash;
+      pts.push([
+        0.5 + px * Math.cos(rot) - py * Math.sin(rot),
+        0.5 + px * Math.sin(rot) + py * Math.cos(rot)
+      ]);
+    }
+    var xs = pts.map(function(p){ return p[0]; }), ys = pts.map(function(p){ return p[1]; });
+    var minX = Math.min.apply(null, xs), maxX = Math.max.apply(null, xs);
+    var minY = Math.min.apply(null, ys), maxY = Math.max.apply(null, ys);
+    var sx = (44 - 14) / Math.max(0.001, maxX - minX);
+    var sy = (44 - 14) / Math.max(0.001, maxY - minY);
+    var s = Math.min(sx, sy);
+    var ox = (44 - (maxX - minX) * s) / 2, oy = (44 - (maxY - minY) * s) / 2;
+    return pts.map(function(p){
+      return [ox + (p[0] - minX) * s, oy + (p[1] - minY) * s];
+    });
+  }
+
+  function shapePath(pts){
+    return pts.map(function(p, i){
+      return (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1);
+    }).join(' ');
+  }
+
+  var SOURCES = ['FIT', '华为', 'FIT', 'FIT', '华为', 'GPX'];
+  var NAMES = ['晨骑', '晚骑', '环城', '通勤', '爬坡', '周末长线', '夜骑', '沿江', '训练'];
+
+  var records = [];
+  (function seedRecords(){
+    var r = mulberry32(20261104);
+    var t = new Date(2026, 10, 4, 7, 12, 0);
+    for (var i = 0; i < 386; i += 1){
+      var dist = Math.round((14 + Math.pow(r(), 2.2) * 200) * 10) / 10;
+      var speed = 18 + r() * 16;
+      var minutes = Math.round(dist / speed * 60);
+      var src = SOURCES[Math.floor(r() * SOURCES.length)];
+      var st = r();
+      records.push({
+        id: i,
+        date: new Date(t.getTime()),
+        name: NAMES[Math.floor(r() * NAMES.length)],
+        dist: dist,
+        speed: Math.round(speed * 10) / 10,
+        climb: Math.round(dist * (2 + r() * 7)),
+        minutes: minutes,
+        src: src,
+        state: st < 0.72 ? 'both' : (st < 0.93 ? 'one' : 'wait'),
+        shape: buildShape(i * 977 + 13)
+      });
+      t = new Date(t.getTime() - Math.round((2 + r() * 5) * 86400000));
+    }
+  })();
+
+  function fmtDate(d){
+    var m = String(d.getMonth() + 1).padStart(2, '0');
+    var day = String(d.getDate()).padStart(2, '0');
+    return m + '-' + day;
+  }
+  function fmtDur(min){
+    var h = Math.floor(min / 60), m2 = min % 60;
+    return h + 'h ' + String(m2).padStart(2, '0') + 'm';
+  }
+  function fmtKm(v){ return v.toFixed(1).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+
+  var PAGE = 20;
+  var state = { filter: 'all', shown: PAGE, view: 'records' };
+
+  function filtered(){
+    if (state.filter === 'all') return records;
+    if (state.filter === '华为') return records.filter(function(x){ return x.src === '华为'; });
+    if (state.filter === 'FIT') return records.filter(function(x){ return x.src === 'FIT'; });
+    return records.filter(function(x){ return String(x.date.getFullYear()) === state.filter; });
+  }
+
+  function statusLabel(s){
+    if (s === 'both') return ['both', '双备'];
+    if (s === 'one') return ['one', '单备'];
+    return ['wait', '待备份'];
+  }
+
+  function renderChips(){
+    var years = {};
+    records.forEach(function(x){ years[x.date.getFullYear()] = true; });
+    var list = [['all', '全部 ' + records.length]];
+    Object.keys(years).sort().reverse().forEach(function(y){
+      list.push([y, y]);
+    });
+    list.push(['华为', '华为']);
+    list.push(['FIT', 'FIT']);
+    document.getElementById('chips').innerHTML = list.map(function(item){
+      var on = state.filter === item[0] ? ' on' : '';
+      return '<button class="chip' + on + '" data-filter="' + item[0] + '">' + item[1] + '</button>';
+    }).join('');
+  }
+
+  function cardHtml(x){
+    var st = statusLabel(x.state);
+    var tagClass = x.src === '华为' ? 'hw' : (x.src === 'GPX' ? 'gpx' : 'fit');
+    return '<div class="rec" data-id="' + x.id + '">' +
+      '<span class="thumb"><svg viewBox="0 0 44 44"><path d="' + shapePath(x.shape) + '" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" opacity="0.92"/></svg></span>' +
+      '<span class="main"><span class="top"><b>' + fmtDate(x.date) + ' ' + x.name + '</b><i class="tag ' + tagClass + '">' + x.src + '</i></span>' +
+      '<span class="meta">' + fmtKm(x.dist) + ' km · ' + fmtDur(x.minutes) + ' · ' + x.speed.toFixed(1) + ' km/h</span>' +
+      '<span class="state ' + st[0] + '"><i class="pip"></i>' + st[1] + '</span></span>' +
+      '<span class="rec-actions">' +
+        '<button class="mini-create" data-create="' + x.id + '" aria-label="用这条记录创作视频">' +
+          '<svg viewBox="0 0 12 12"><path d="M2.4 9.6h1.7l5.2-5.2-1.7-1.7L2.4 7.9z"/><path d="M8.2 2.6l1.2-1.2 1.7 1.7-1.2 1.2"/></svg>创作</button>' +
+      '</span></div>';
+  }
+
+  function renderList(reset){
+    var data = filtered();
+    if (reset) state.shown = PAGE;
+    var slice = data.slice(0, Math.min(state.shown, data.length));
+    document.getElementById('list').innerHTML = slice.map(cardHtml).join('');
+    var foot = document.getElementById('listfoot');
+    var more = document.getElementById('loadMore');
+    if (data.length === 0){
+      foot.style.display = 'flex';
+      more.textContent = '暂无记录';
+      more.disabled = true;
+    } else if (state.shown >= data.length){
+      foot.style.display = 'flex';
+      more.textContent = '已全部加载 · 共 ' + data.length + ' 条';
+      more.disabled = true;
+    } else {
+      foot.style.display = 'flex';
+      more.textContent = '加载更多 · 已显示 ' + slice.length + ' / ' + data.length;
+      more.disabled = false;
+    }
+    var totalKm = data.reduce(function(s, x){ return s + x.dist; }, 0);
+    document.getElementById('recSum').textContent = data.length + ' 条 · ' + fmtKm(totalKm) + ' km';
+    document.getElementById('setTotal').textContent = records.length + ' 条';
+  }
+
+  function show(view){
+    state.view = view;
+    document.querySelectorAll('.view').forEach(function(v){
+      v.classList.toggle('active', v.dataset.view === view);
+    });
+    var tabbar = document.getElementById('tabbar');
+    tabbar.style.display = view === 'create' ? 'none' : 'grid';
+    document.querySelectorAll('.tab').forEach(function(t){
+      t.classList.toggle('on', t.dataset.tab === view);
+    });
+    if (view !== 'create'){
+      playing = false;
+      setPlayIcon(false);
+      stopAudio();
+      exitFullscreen(true);
+    }
+  }
+
+  function toast(msg){
+    var el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.add('on');
+    clearTimeout(el._t);
+    el._t = setTimeout(function(){ el.classList.remove('on'); }, 2100);
+  }
+
+  document.getElementById('tabbar').addEventListener('click', function(e){
+    var btn = e.target.closest('.tab');
+    if (!btn) return;
+    show(btn.dataset.tab);
+  });
+
+  document.getElementById('chips').addEventListener('click', function(e){
+    var chip = e.target.closest('.chip');
+    if (!chip) return;
+    state.filter = chip.dataset.filter;
+    renderChips();
+    renderList(true);
+    document.getElementById('v-records').scrollTop = 0;
+  });
+
+  document.getElementById('loadMore').addEventListener('click', function(){
+    state.shown += PAGE;
+    renderList(false);
+  });
+
+  document.getElementById('v-records').addEventListener('scroll', function(e){
+    var el = e.currentTarget;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 140){
+      var data = filtered();
+      if (state.shown < data.length){
+        state.shown += PAGE;
+        renderList(false);
+      }
+    }
+  });
+
+  document.getElementById('list').addEventListener('click', function(e){
+    var card = e.target.closest('.rec');
+    if (!card) return;
+    openCreate(records[Number(card.dataset.id)]);
+  });
+
+  function openCreate(rec){
+    current = rec || records[0];
+    exitFullscreen(true);
+    document.getElementById('createTitle').textContent = recTitle(current);
+    document.getElementById('fsTitle').textContent = recTitle(current);
+    var m = document.querySelector('.metric:nth-child(1) .nm'); if (m) m.textContent = fmtKm(current.dist) + ' km';
+    var m2 = document.querySelector('.metric:nth-child(2) .nm'); if (m2) m2.textContent = current.speed.toFixed(1) + ' km/h';
+    var m3 = document.querySelector('.metric:nth-child(3) .nm'); if (m3) m3.textContent = current.climb.toLocaleString('en-US') + ' m';
+    var m4 = document.querySelector('.metric:nth-child(4) .nm'); if (m4) m4.textContent = fmtDur(current.minutes);
+    playhead = 0;
+    show('create');
+    sizeCanvas();
+    renderScene();
+  }
+
+  document.getElementById('backBtn').addEventListener('click', function(){
+    playing = false;
+    stopAudio();
+    show('records');
+  });
+
+  var current = records[0];
+  var DURATION = 38;
+  var playhead = 0;
+  var playing = false;
+  var lastTick = 0;
+  var rafId = 0;
+
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+  var stagewrap = cv.parentElement;
+
+  function active(){
+    return { cv: cv, ctx: ctx, wrap: stagewrap };
+  }
+
+  function sizeCanvas(){
+    var t = active();
+    var dpr = Math.min(2, window.devicePixelRatio || 1);
+    var box = t.wrap.getBoundingClientRect();
+    if (!box.width || !box.height) return;
+    t.cv.width = Math.max(1, Math.round(box.width * dpr));
+    t.cv.height = Math.max(1, Math.round(box.height * dpr));
+    t.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function accentColor(){
+    return getComputedStyle(root).getPropertyValue('--accent').trim() || '#B4E64A';
+  }
+  function dimColor(){
+    return getComputedStyle(root).getPropertyValue('--dim').trim() || '#5F6A66';
+  }
+
+  function scenePoints(w, h){
+    var pad = 26;
+    var r = mulberry32((current ? current.id : 1) * 977 + 13);
+    var n = 64, pts = [], x = 0.5, y = 0.5, a = r() * Math.PI * 2;
+    for (var i = 0; i < n; i += 1){
+      a += (r() - 0.5) * 0.85;
+      x += Math.cos(a) * 0.045;
+      y += Math.sin(a) * 0.038;
+      pts.push([x, y]);
+    }
+    var xs = pts.map(function(p){ return p[0]; }), ys = pts.map(function(p){ return p[1]; });
+    var minX = Math.min.apply(null, xs), maxX = Math.max.apply(null, xs);
+    var minY = Math.min.apply(null, ys), maxY = Math.max.apply(null, ys);
+    var s = Math.min((w - pad * 2) / Math.max(0.001, maxX - minX), (h - pad * 2) / Math.max(0.001, maxY - minY));
+    var ox = (w - (maxX - minX) * s) / 2, oy = (h - (maxY - minY) * s) / 2;
+    return pts.map(function(p){ return [ox + (p[0] - minX) * s, oy + (p[1] - minY) * s]; });
+  }
+
+  function easeInOut(t){
+    return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+  }
+
+  function renderScene(){
+    var t = active();
+    var ctx = t.ctx;
+    if (!t.cv.width || t.cv.width < 4) sizeCanvas();
+    var box = t.wrap.getBoundingClientRect();
+    var w = box.width, h = box.height;
+    if (!w || !h) return;
+    ctx.clearRect(0, 0, w, h);
+
+    ctx.fillStyle = '#06080B';
+    ctx.fillRect(0, 0, w, h);
+
+    var pts = scenePoints(w, h);
+    var total = 0, segLen = [];
+    for (var i = 1; i < pts.length; i += 1){
+      var dx = pts[i][0] - pts[i - 1][0], dy = pts[i][1] - pts[i - 1][1];
+      var l = Math.sqrt(dx * dx + dy * dy);
+      segLen.push(l); total += l;
+    }
+
+    var p = easeInOut(Math.min(1, playhead / DURATION));
+    var k = fsMode ? 1.55 : 1;
+
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = dimColor();
+    ctx.globalAlpha = 0.42;
+    ctx.lineWidth = 6 * k;
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (var j = 1; j < pts.length; j += 1) ctx.lineTo(pts[j][0], pts[j][1]);
+    ctx.stroke();
+
+    var target = total * p, acc = 0, tip = pts[0];
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = accentColor();
+    ctx.lineWidth = 2.4 * k;
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (var k = 0; k < segLen.length; k += 1){
+      if (acc + segLen[k] >= target){
+        var f = segLen[k] > 0 ? (target - acc) / segLen[k] : 0;
+        tip = [pts[k][0] + (pts[k + 1][0] - pts[k][0]) * f, pts[k][1] + (pts[k + 1][1] - pts[k][1]) * f];
+        ctx.lineTo(tip[0], tip[1]);
+        break;
+      }
+      acc += segLen[k];
+      ctx.lineTo(pts[k + 1][0], pts[k + 1][1]);
+      tip = pts[k + 1];
+    }
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(pts[0][0], pts[0][1], 3.2, 0, Math.PI * 2);
+    ctx.fillStyle = '#06080B';
+    ctx.fill();
+    ctx.strokeStyle = accentColor();
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(tip[0], tip[1], 9 * k, 0, Math.PI * 2);
+    ctx.fillStyle = accentColor();
+    ctx.globalAlpha = 0.16;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    ctx.arc(tip[0], tip[1], 4.4 * k, 0, Math.PI * 2);
+    ctx.fill();
+
+    var pct = (p * 100).toFixed(1) + '%';
+    var sec = Math.floor(playhead);
+    var timeTxt = '00:' + String(sec).padStart(2, '0') + ' / 00:' + DURATION;
+    document.querySelectorAll('[data-seek-fill]').forEach(function(el){ el.style.width = pct; });
+    document.querySelectorAll('[data-time]').forEach(function(el){ el.textContent = timeTxt; });
+
+    if (playing){
+      for (var b = 0; b < 4; b += 1){
+        var bar = document.querySelectorAll('#eq i')[b];
+        bar.style.height = (3 + Math.random() * 11).toFixed(0) + 'px';
+      }
+    }
+  }
+
+  function tick(ts){
+    if (!playing) return;
+    if (!lastTick) lastTick = ts;
+    var dt = Math.min(0.1, (ts - lastTick) / 1000);
+    lastTick = ts;
+    playhead += dt;
+    if (playhead >= DURATION){
+      playhead = DURATION;
+      playing = false;
+      setPlayIcon(false);
+      stopAudio();
+    }
+    renderScene();
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function setPlayIcon(on){
+    var el = document.getElementById('playIcon');
+    if (el){
+      el.className = on ? 'pause' : 'tri';
+      el.innerHTML = on ? '<i></i><i></i>' : '';
+    }
+  }
+
+  function togglePlay(){
+    if (playing){
+      playing = false;
+      setPlayIcon(false);
+      stopAudio();
+      renderScene();
+      return;
+    }
+    if (playhead >= DURATION) playhead = 0;
+    playing = true;
+    lastTick = 0;
+    setPlayIcon(true);
+    startAudio();
+    rafId = requestAnimationFrame(tick);
+  }
+
+  document.getElementById('playBtn').addEventListener('click', function(){ togglePlay(); });
+
+  // 全屏播放：同一块画布铺满，底部露出音乐条与进度
+  var fsMode = false;
+
+  function enterFullscreen(){
+    if (fsMode || state.view !== 'create') return;
+    fsMode = true;
+    document.getElementById('v-create').classList.add('fs');
+    document.querySelector('.screen').classList.add('fs-on');
+    document.getElementById('fsTitle').textContent = recTitle(current);
+    syncSongLabels();
+    requestAnimationFrame(function(){ sizeCanvas(); renderScene(); });
+    if (!playing) togglePlay();
+  }
+
+  function exitFullscreen(silent){
+    if (!fsMode) return;
+    fsMode = false;
+    document.getElementById('v-create').classList.remove('fs');
+    document.querySelector('.screen').classList.remove('fs-on');
+    requestAnimationFrame(function(){ sizeCanvas(); renderScene(); });
+    if (!silent) renderScene();
+  }
+
+  document.getElementById('fsBtn').addEventListener('click', enterFullscreen);
+  document.getElementById('fsExit').addEventListener('click', function(){ exitFullscreen(); });
+  document.getElementById('fsSwap').addEventListener('click', function(){
+    document.getElementById('sheet').classList.add('on');
+  });
+  document.getElementById('fsSeek').addEventListener('click', function(e){
+    var r = this.getBoundingClientRect();
+    var ratio = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+    playhead = ratio * DURATION;
+    if (playhead >= DURATION){ playing = false; setPlayIcon(false); stopAudio(); }
+    renderScene();
+  });
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape' && fsMode) exitFullscreen();
+  });
+
+  function recTitle(rec){
+    return rec.date.getFullYear() + '-' + fmtDate(rec.date) + ' ' + rec.name;
+  }
+
+  var audioCtx = null, nodes = [], masterGain = null;
+  var SONGS = [
+    { name: '晨风 · 轻电子', freqs: [220, 277.18, 329.63], type: 'sine' },
+    { name: '山径 · 钢琴', freqs: [196, 246.94, 293.66], type: 'triangle' },
+    { name: '疾驰 · 合成器', freqs: [164.81, 196, 246.94], type: 'sawtooth' },
+    { name: '无音乐', freqs: [], type: 'sine' }
+  ];
+  var songIndex = 0;
+
+  function startAudio(){
+    var song = SONGS[songIndex];
+    if (!song.freqs.length) return;
+    stopAudio();
+    if (!audioCtx){
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      audioCtx = new AC();
+    }
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    masterGain = audioCtx.createGain();
+    masterGain.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+    masterGain.gain.exponentialRampToValueAtTime(0.055, audioCtx.currentTime + 0.6);
+    masterGain.connect(audioCtx.destination);
+    nodes = song.freqs.map(function(f, i){
+      var osc = audioCtx.createOscillator();
+      var g = audioCtx.createGain();
+      osc.type = song.type;
+      osc.frequency.value = f;
+      g.gain.value = i === 0 ? 0.5 : 0.3;
+      osc.connect(g);
+      g.connect(masterGain);
+      osc.start();
+      return osc;
+    });
+  }
+
+  function stopAudio(){
+    if (!audioCtx) return;
+    if (masterGain){
+      try {
+        masterGain.gain.cancelScheduledValues(audioCtx.currentTime);
+        masterGain.gain.setValueAtTime(Math.max(0.0001, masterGain.gain.value), audioCtx.currentTime);
+        masterGain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.18);
+      } catch (err) {}
+    }
+    var kill = nodes, gain = masterGain;
+    nodes = []; masterGain = null;
+    setTimeout(function(){
+      kill.forEach(function(o){ try { o.stop(); } catch (e) {} });
+      if (gain) { try { gain.disconnect(); } catch (e) {} }
+    }, 220);
+  }
+
+  document.getElementById('swapMusic').addEventListener('click', function(){
+    document.getElementById('sheet').classList.add('on');
+  });
+  document.getElementById('sheetMask').addEventListener('click', function(){
+    document.getElementById('sheet').classList.remove('on');
+  });
+  document.getElementById('sheet').addEventListener('click', function(e){
+    var song = e.target.closest('.song');
+    if (!song) return;
+    songIndex = Number(song.dataset.song);
+    document.querySelectorAll('.song').forEach(function(s){
+      s.classList.toggle('on', s === song);
+      s.querySelector('.chk').textContent = s === song ? '\u2713' : '';
+    });
+    syncSongLabels();
+    document.getElementById('sheet').classList.remove('on');
+    toast(songIndex === 3 ? '已关闭背景音乐' : '已切换：' + SONGS[songIndex].name);
+    if (playing){ startAudio(); }
+  });
+
+  document.getElementById('exportBtn').addEventListener('click', function(){
+    var overlay = document.getElementById('overlay');
+    var bar = document.getElementById('ovBar');
+    var pct = document.getElementById('ovPct');
+    var st = document.getElementById('ovSt');
+    overlay.classList.add('on');
+    var frames = 1149, t0 = performance.now(), span = 3200;
+    var phases = ['瓦片预取', '封面帧', '巡航帧', '尾段帧', '封装 MP4'];
+    function step(now){
+      var p = Math.min(1, (now - t0) / span);
+      bar.style.width = (p * 100).toFixed(1) + '%';
+      pct.textContent = Math.round(p * 100) + '%';
+      var f = Math.round(frames * p);
+      var phase = phases[Math.min(phases.length - 1, Math.floor(p * phases.length))];
+      st.textContent = phase + ' · ' + f + ' / ' + frames + ' 帧';
+      if (p < 1) requestAnimationFrame(step);
+      else {
+        overlay.classList.remove('on');
+        toast('导出完成 · 已存入手机相册');
+      }
+    }
+    requestAnimationFrame(step);
+  });
+
+  document.querySelectorAll('[data-toast]').forEach(function(btn){
+    btn.addEventListener('click', function(){ toast(btn.dataset.toast); });
+  });
+
+  document.querySelectorAll('[data-sw]').forEach(function(sw){
+    sw.addEventListener('click', function(){
+      sw.classList.toggle('on');
+      toast(sw.classList.contains('on') ? '已开启' : '已关闭');
+    });
+  });
+
+  document.getElementById('pickFile').addEventListener('click', function(){
+    document.getElementById('fileInput').click();
+  });
+
+  var imported = {};
+  document.getElementById('fileInput').addEventListener('change', function(e){
+    var files = Array.prototype.slice.call(e.target.files || []);
+    if (!files.length) return;
+    var added = 0, dup = 0;
+    files.forEach(function(f){
+      if (imported[f.name]){ dup += 1; return; }
+      imported[f.name] = true;
+      var ext = (f.name.split('.').pop() || 'FIT').toUpperCase();
+      var src = ext === 'GPX' ? 'GPX' : (ext === 'TCX' ? 'GPX' : 'FIT');
+      records.unshift({
+        id: records.length,
+        date: new Date(),
+        name: f.name.replace(/\.[^.]+$/, '').slice(0, 10) || '新导入',
+        dist: 42.8, speed: 29.7, climb: 268, minutes: 86,
+        src: src, state: 'wait', shape: buildShape(records.length * 977 + 13)
+      });
+      added += 1;
+    });
+    renderChips();
+    renderList(true);
+    show('records');
+    if (added && !dup) toast('已导入 ' + added + ' 条 · 待备份');
+    else if (added && dup) toast('新增 ' + added + ' 条，跳过重复 ' + dup + ' 条');
+    else toast('这个文件已经导入过了');
+    e.target.value = '';
+  });
+
+  document.getElementById('hwImport').addEventListener('click', function(){
+    var bar = document.getElementById('hwBar'), fill = document.getElementById('hwFill');
+    bar.style.display = 'block';
+    var t0 = performance.now();
+    function step(now){
+      var p = Math.min(1, (now - t0) / 1800);
+      fill.style.width = (p * 100).toFixed(1) + '%';
+      if (p < 1) requestAnimationFrame(step);
+      else {
+        bar.style.display = 'none';
+        fill.style.width = '0';
+        toast('新增 87 条 · 重复跳过 13 条');
+      }
+    }
+    requestAnimationFrame(step);
+  });
+
+  document.getElementById('hwGuide').addEventListener('click', function(){
+    toast('引导页：四步截图 + 常见问题');
+  });
+
+  document.getElementById('syncNow').addEventListener('click', function(){
+    document.getElementById('bkState').textContent = '同步中…';
+    setTimeout(function(){
+      document.getElementById('bkState').textContent = '已同步 · 刚刚';
+      toast('3 条已双端备份完成');
+    }, 1300);
+  });
+  document.getElementById('exportPack').addEventListener('click', function(){
+    toast('已生成加密全量包 · 42 MB');
+  });
+  document.getElementById('rebind').addEventListener('click', function(){
+    toast('请重新输入 GitHub / Gitee Token');
+  });
+
+  var THEME_NAMES = { tech: '科技主题', night: '夜间主题', light: '明亮主题' };
+  function applyTheme(name){
+    root.dataset.theme = name;
+    stage.dataset.theme = name;
+    document.querySelectorAll('[data-set-theme]').forEach(function(b){
+      b.classList.toggle('on', b.dataset.setTheme === name);
+    });
+    document.querySelectorAll('#themeGrid [data-set-theme]').forEach(function(b){
+      var on = b.dataset.setTheme === name;
+      b.style.background = on ? 'var(--accent)' : 'transparent';
+      b.style.color = on ? 'var(--accent-ink)' : 'var(--text)';
+      b.style.borderColor = on ? 'var(--accent)' : 'var(--line-strong)';
+    });
+    var badge = document.getElementById('themeBadge');
+    if (badge) badge.textContent = THEME_NAMES[name];
+    document.querySelectorAll('[data-theme-tag]').forEach(function(el){
+      el.textContent = THEME_NAMES[name];
+    });
+    if (state.view === 'create') renderScene();
+  }
+  document.querySelectorAll('[data-set-theme]').forEach(function(btn){
+    btn.addEventListener('click', function(){ applyTheme(btn.dataset.setTheme); });
+  });
+
+  window.addEventListener('resize', function(){
+    if (state.view === 'create'){ sizeCanvas(); renderScene(); }
+  });
+
+  function syncSongLabels(){
+    document.querySelectorAll('[data-song-name]').forEach(function(el){
+      el.textContent = SONGS[songIndex].name;
+    });
+    document.getElementById('setMusic').textContent = SONGS[songIndex].name;
+  }
+
+  renderChips();
+  renderList(true);
+  applyTheme('tech');
+  sizeCanvas();
+  renderScene();
+})();
+</script>
+</body>
+</html>

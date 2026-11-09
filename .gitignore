@@ -1,0 +1,21 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+web-dist/
+build-tmp/
+*.apk
+*.idsig
+
+# Android SDK 二进制（tools/sdk 本地自备，不入库）
+tools/sdk/
+tools/downloads/
+
+# 编译中间文件
+*.class
+
+# 本地工作区文件
+.workbuddy/
+*.genie
+.DS_Store

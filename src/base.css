@@ -1,0 +1,482 @@
+/* 基础层：字体、设计变量、toast、导出弹层、缓存确认弹层。
+   这些是各页面共用的一次性样式，从原来的 style.css 里抽出来，
+   避免旧落地页/工作室的类名与新外壳互相打架。 */
+
+@font-face {
+  font-family: "Barlow Condensed";
+  src: url("./assets/fonts/barlow-condensed-latin-500-normal.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Barlow Condensed";
+  src: url("./assets/fonts/barlow-condensed-latin-600-normal.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Barlow Condensed";
+  src: url("./assets/fonts/barlow-condensed-latin-700-normal.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --bg: #05090a;
+  --bg-soft: #0a1112;
+  --ink: #f3f7ee;
+  --muted: #93a19a;
+  --faint: #5b6861;
+  --lime: #d8ff3e;
+  --teal: #54e8cf;
+  --orange: #ffb23e;
+  --red: #ff6257;
+  --line: rgba(224, 242, 231, 0.12);
+  --line-strong: rgba(224, 242, 231, 0.2);
+  --panel: rgba(255, 255, 255, 0.035);
+  --font-zh: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
+  --font-display: "Barlow Condensed", "Arial Narrow", "DIN Alternate", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  /* WebView 默认会在点按可点击元素时闪一块浅蓝色高亮，与三套主题都不搭。
+     按压反馈已经有 :active 样式负责，这里把系统默认的那块关掉。 */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* App 不是文档：长按不应弹出「查看/复制/分享」的选择手柄。
+   真正需要复制的输入框和导出报告在下方单独放开。 */
+html,
+body {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+input,
+textarea,
+[contenteditable],
+.export-report {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  overflow-x: hidden;
+  background:
+    radial-gradient(1100px 760px at 8% -12%, rgba(78, 131, 103, 0.18), transparent 62%),
+    radial-gradient(900px 620px at 100% 20%, rgba(195, 255, 56, 0.055), transparent 60%),
+    radial-gradient(940px 700px at 50% 110%, rgba(38, 89, 86, 0.14), transparent 65%),
+    var(--bg);
+  color: var(--ink);
+  font-family: var(--font-zh);
+  font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.42;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.26'/%3E%3C/svg%3E");
+  mix-blend-mode: soft-light;
+}
+
+svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  color: inherit;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+::selection {
+  background: var(--lime);
+  color: #071010;
+}
+
+
+.svg-defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.svg-defs symbol path,
+.svg-defs symbol circle,
+.svg-defs symbol rect {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  color: #8d9a92;
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.19em;
+  animation: rise 0.8s 0.05s both;
+}
+
+.eyebrow b {
+  color: var(--lime);
+  font-weight: 600;
+}
+
+.eyebrow-line {
+  display: inline-block;
+  width: 30px;
+  height: 1px;
+  background: var(--lime);
+  opacity: 0.6;
+}
+
+.eyebrow.small {
+  font-size: 10px;
+  letter-spacing: 0.17em;
+}
+
+.text-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #839088;
+  cursor: pointer;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  transition: color 0.2s;
+}
+
+.text-btn:hover {
+  color: var(--ink);
+}
+
+.text-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+
+.spinner {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border: 1.5px solid rgba(216, 255, 62, 0.25);
+  border-top-color: var(--lime);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.toast {
+  position: fixed;
+  /* 抬到底部导航之上，撤销按钮别被 tabbar 挡住点不到 */
+  bottom: calc(74px + env(safe-area-inset-bottom));
+  left: 50%;
+  z-index: 100;
+  max-width: min(90vw, 480px);
+  padding: 11px 16px;
+  transform: translate(-50%, 14px);
+  border: 1px solid rgba(224, 242, 231, 0.14);
+  border-radius: 10px;
+  background: rgba(9, 18, 18, 0.94);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.42);
+  color: #d9e5dd;
+  font-size: 12px;
+  line-height: 1.5;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s, transform 0.25s;
+  backdrop-filter: blur(14px);
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.toast.error {
+  border-color: rgba(255, 98, 87, 0.3);
+  color: #ffb3ac;
+}
+
+.export-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 100dvh;
+  padding: 16px;
+  overflow: auto;
+  background: rgba(2, 5, 6, 0.78);
+  backdrop-filter: blur(16px);
+}
+
+.export-overlay[hidden] {
+  display: none;
+}
+
+.cache-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(2, 6, 7, 0.82);
+  backdrop-filter: blur(14px);
+}
+
+.cache-confirm-overlay[hidden] {
+  display: none;
+}
+
+.cache-confirm-card {
+  width: min(400px, calc(100vw - 32px));
+  padding: 26px 24px 22px;
+  border: 1px solid rgba(216, 255, 62, 0.18);
+  border-radius: 20px;
+  background:
+    radial-gradient(100% 90% at 50% 0%, rgba(216, 255, 62, 0.07), transparent 62%),
+    #091110;
+  box-shadow: 0 36px 90px rgba(0, 0, 0, 0.58);
+  text-align: center;
+}
+
+.cache-confirm-icon {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  margin: 0 auto 14px;
+  border: 1px solid rgba(216, 255, 62, 0.35);
+  border-radius: 50%;
+  background: rgba(216, 255, 62, 0.08);
+  color: #d8ff3e;
+  box-shadow: 0 0 26px rgba(216, 255, 62, 0.1);
+}
+
+.cache-confirm-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.cache-confirm-card .eyebrow {
+  justify-content: center;
+  font-size: 9px;
+}
+
+.cache-confirm-card h3 {
+  margin: 10px 0 8px;
+  font-size: 21px;
+  letter-spacing: -0.03em;
+}
+
+.cache-confirm-card p {
+  max-width: 300px;
+  margin: 0 auto;
+  color: #7d8b83;
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.cache-confirm-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.cache-confirm-actions button {
+  flex: 1;
+  min-height: 38px;
+  border-radius: 9px;
+  font-family: var(--font-zh);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.cache-confirm-cancel {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  color: #a7b4ac;
+}
+
+.cache-confirm-ok {
+  border: 1px solid rgba(255, 112, 128, 0.38);
+  background: rgba(255, 112, 128, 0.1);
+  color: #ff8b99;
+}
+
+.cache-confirm-ok:hover {
+  background: rgba(255, 112, 128, 0.16);
+}
+
+.export-modal {
+  flex: 0 0 auto;
+  width: min(430px, calc(100vw - 32px));
+  max-width: 430px;
+  margin: 0 auto;
+  padding: 34px 30px 24px;
+  border: 1px solid rgba(224, 242, 231, 0.15);
+  border-radius: 22px;
+  background:
+    radial-gradient(100% 80% at 50% 0%, rgba(216, 255, 62, 0.06), transparent 60%),
+    #0a1112;
+  text-align: center;
+  box-shadow: 0 40px 100px rgba(0, 0, 0, 0.55);
+}
+
+.export-ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  margin: 0 auto 18px;
+  border: 1px solid rgba(216, 255, 62, 0.22);
+  border-radius: 50%;
+}
+
+.export-ring span {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--lime);
+  box-shadow: 0 0 18px rgba(216, 255, 62, 0.7);
+  animation: pulse 1.3s infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.45);
+    opacity: 0.65;
+  }
+}
+
+.export-modal .eyebrow {
+  justify-content: center;
+  font-size: 9px;
+}
+
+.export-modal h3 {
+  margin: 12px 0 7px;
+  font-size: 22px;
+  letter-spacing: -0.03em;
+}
+
+.export-modal p {
+  margin: 0 0 18px;
+  color: #84928a;
+  font-size: 11px;
+}
+
+.export-progress {
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.export-progress > div {
+  width: 0%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--lime);
+  transition: width 0.2s linear;
+}
+
+.export-modal small {
+  display: block;
+  margin-top: 11px;
+  color: #5d6b63;
+  font-size: 9px;
+  line-height: 1.6;
+}
+
+/* Post-export report: stays on screen until dismissed so the numbers can be
+   read or screenshotted instead of flashing past in a toast. */
+.export-report {
+  margin: 4px 0 0;
+  padding: 13px 15px;
+  max-height: 62vh;
+  overflow-y: auto;
+  border: 1px solid rgba(224, 242, 231, 0.12);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.045);
+  color: #dfe9e2;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.85;
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-word;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.export-report[hidden] {
+  display: none;
+}
+
+.export-modal .text-btn.is-done {
+  color: var(--lime);
+  border-color: rgba(216, 255, 62, 0.35);
+}
+
+.export-modal .text-btn {
+  justify-content: center;
+  margin: 15px auto 0;
+}
