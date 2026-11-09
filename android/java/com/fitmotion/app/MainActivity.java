@@ -3,6 +3,7 @@ package com.fitmotion.app;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
+import android.content.ClipData;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.graphics.Color;
@@ -634,15 +635,64 @@ public class MainActivity extends Activity {
         /** 分享 MediaStore 里已保存的内容（原生导出直接返回的 content uri）。 */
         @JavascriptInterface
         public boolean shareUri(String uri, String mime) {
+            return shareUriInternal(uri, mime, null);
+        }
+
+        /** 检查导出的视频是否还在（用户可能已在相册删除），创作页分享按钮靠它点亮。 */
+        @JavascriptInterface
+        public boolean canShare(String uri) {
+            try {
+                if (uri == null || uri.length() == 0) return false;
+                Uri target = Uri.parse(uri);
+                if (!"content".equals(target.getScheme())) return false;
+                android.database.Cursor cursor = getContentResolver().query(target, null, null, null, null);
+                if (cursor == null) return false;
+                boolean exists = cursor.moveToFirst();
+                cursor.close();
+                return exists;
+            } catch (Throwable ignored) {
+                return false;
+            }
+        }
+
+        /**
+         * 定向分享：target = wechat / douyin / 其他（系统面板）。
+         * 目标 App 未安装时返回 false，让 H5 提示，而不是弹一个空 chooser。
+         */
+        @JavascriptInterface
+        public boolean shareUriTo(String uri, String mime, String target) {
+            String pkg = "wechat".equals(target) ? "com.tencent.mm"
+                    : "douyin".equals(target) ? "com.ss.android.ugc.aweme" : null;
+            if (pkg != null && !isInstalled(pkg)) return false;
+            return shareUriInternal(uri, mime, pkg);
+        }
+
+        private boolean shareUriInternal(String uri, String mime, String pkg) {
             try {
                 if (uri == null || uri.length() == 0) return false;
                 Intent send = new Intent(Intent.ACTION_SEND);
                 send.setType(mime == null || mime.length() == 0 ? "video/mp4" : mime);
                 send.putExtra(Intent.EXTRA_STREAM, Uri.parse(uri));
+                // EXTRA_STREAM 的授权在部分系统上不生效，ClipData 补一份才能保证微信/抖音读到
+                send.setClipData(ClipData.newRawUri("video", Uri.parse(uri)));
                 send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                startActivity(Intent.createChooser(send, "分享"));
+                if (pkg != null) {
+                    send.setPackage(pkg);
+                    startActivity(send);
+                } else {
+                    startActivity(Intent.createChooser(send, "分享"));
+                }
                 return true;
-            } catch (Throwable error) {
+            } catch (Throwable ignored) {
+                return false;
+            }
+        }
+
+        private boolean isInstalled(String pkg) {
+            try {
+                getPackageManager().getPackageInfo(pkg, 0);
+                return true;
+            } catch (Throwable ignored) {
                 return false;
             }
         }

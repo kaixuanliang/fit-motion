@@ -242,24 +242,28 @@ export function buildActivity(parsed: ParsedFit, fileName: string): Activity {
   // 总耗时（elapsed）：含停车休息，列表与数据面板的「总时长」。
   const elapsedSec = durationAvailable ? Math.max(1, session.elapsedTime ?? recordDuration) : durationSec;
   const elapsedAvailable = durationAvailable && (session.elapsedTime ?? 0) > 0;
-  // 运动时长（moving time）：优先用码表原生的 timerTime；没有就用点间停留
-  // 检测估算 —— 平均速度必须是「距离 ÷ 运动时长」，停车时间摊进去会严重偏低
-  //（旧逻辑 timerTime 缺失时直接退回 elapsed，GPX/TCX/华为 JSON 全中招）。
+
+  const distanceM = session.distance && session.distance > 0 ? session.distance : routeDistanceM;
+  const scale = distanceM / routeDistanceM;
+  for (const point of points) point.distance *= scale;
+
+  // 运动时长（moving time）：码表原生的 timerTime 只有「确实比总时长短」才可信
+  // —— 华为 JSON / GPX / TCX 的部分解析路径会把 timerTime 硬填成 elapsed，
+  // 那样运动时长永远等于总时长；这种没有信息量的值丢给停留检测重新估算。
   const stopThreshold = STOP_SPEED_BY_KEY[sportKeyOf(session.sport)];
+  const nativeTimer = session.timerTime && session.timerTime > 0
+    && (elapsedSec <= 0 || session.timerTime < elapsedSec * 0.995)
+    ? session.timerTime
+    : null;
   const estimatedMoving = timeAvailable && elapsedSec > 0
     ? estimateMovingSec(points, elapsedSec, stopThreshold)
     : null;
   const movingSec = durationAvailable
     ? Math.max(1, Math.min(
         elapsedSec,
-        (session.timerTime && session.timerTime > 0 ? session.timerTime : null)
-          ?? estimatedMoving
-          ?? actualDuration,
+        nativeTimer ?? estimatedMoving ?? actualDuration,
       ))
     : durationSec;
-  const distanceM = session.distance && session.distance > 0 ? session.distance : routeDistanceM;
-  const scale = distanceM / routeDistanceM;
-  for (const point of points) point.distance *= scale;
 
   const recordedSpeeds = points.map((point) => point.speed).filter(isNumber);
   const hasRecordedSpeeds = recordedSpeeds.length > 0;
@@ -288,12 +292,16 @@ export function buildActivity(parsed: ParsedFit, fileName: string): Activity {
     ? (session.maxSpeed && session.maxSpeed > 0 ? session.maxSpeed : computedMaxSpeed)
     : 0;
   const avgSpeedAvailable = (session.avgSpeed ?? 0) > 0 || durationAvailable || hasRecordedSpeeds;
+  // 平均速度统一口径：距离 ÷ 运动时长。码表自带的 avgSpeed 多是「距离 ÷ 总耗时」
+  //（华为尤其如此），停车时间一摊平均速度就虚低，只作没有时长信息时的兜底。
   const avgSpeed = avgSpeedAvailable
-    ? (session.avgSpeed && session.avgSpeed > 0
-      ? session.avgSpeed
-      : durationAvailable
-        ? distanceM / movingSec
-        : recordedSpeeds.reduce((sum, value) => sum + value, 0) / recordedSpeeds.length)
+    ? (durationAvailable && distanceM > 0 && movingSec > 0
+      ? distanceM / movingSec
+      : session.avgSpeed && session.avgSpeed > 0
+        ? session.avgSpeed
+        : recordedSpeeds.length
+          ? recordedSpeeds.reduce((sum, value) => sum + value, 0) / recordedSpeeds.length
+          : 0)
     : 0;
 
   const sportInfo = SPORTS[session.sport ?? -1] ?? { name: '运动', key: 'other' as const };

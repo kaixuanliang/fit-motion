@@ -666,6 +666,13 @@ body {
   stroke-linejoin: round;
 }
 
+/* 分享视频：导出过且文件还在时才出现，描边样式与主导出按钮区分 */
+.cta.share-cta {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
 .cta-note {
   margin: -4px 0 0;
   text-align: center;
@@ -1531,7 +1538,7 @@ body {
 
 .metric-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 7px;
   flex: 0 0 auto;
 }
@@ -1577,14 +1584,15 @@ body {
 }
 
 .metric-card b {
-  font-size: 19px;
+  font-size: 15.5px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.2px;
+  white-space: nowrap;
 }
 
 .metric-card em {
-  font-size: 9.5px;
+  font-size: 9px;
   font-style: normal;
   color: var(--dim);
 }
@@ -2235,6 +2243,7 @@ body {
 #studio.fs .metric-grid,
 #studio.fs .detail-grid,
 #studio.fs .cta,
+#studio.fs .share-cta,
 #studio.fs .cta-note,
 #studio.fs .sub-actions,
 #studio.fs .split-panel,

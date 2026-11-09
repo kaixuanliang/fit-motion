@@ -27,6 +27,8 @@ export interface RecordsApi {
   total(): number;
   /** 最近一次渲染出来的记录 */
   items(): ActivityMeta[];
+  /** 处于批量选择模式时退出并返回 true（Android 返回键用它取消多选） */
+  exitSelectingIfActive(): boolean;
 }
 
 type OpenHandler = (meta: ActivityMeta) => void;
@@ -459,6 +461,11 @@ export function initRecords(onOpen: OpenHandler, hooks: RecordsHooks = {}): Reco
     },
     total: () => state.total,
     items: () => state.items,
+    exitSelectingIfActive: () => {
+      if (!state.selecting) return false;
+      exitSelecting();
+      return true;
+    },
   };
 }
 

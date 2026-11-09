@@ -60,9 +60,11 @@ export function parseTcx(text: string, fileName: string): ParsedFit {
   const lapClimb = laps.reduce((sum, lap) => sum + (readNumber(lap, ['CumulativeClimb']) ?? 0), 0);
   const lapDecrease = laps.reduce((sum, lap) => sum + (readNumber(lap, ['CumulativeDecrease']) ?? 0), 0);
 
-  const timerSec = lapTimerSec > 0
+  // Lap 的 TotalTimeSeconds 是码表计时（不含停留），可信；没有 Lap 就留空，
+  // 让 activity.ts 停留检测估算，别拿点跨度硬填成运动时长。
+  const timerTime = lapTimerSec > 0
     ? (span != null ? Math.min(lapTimerSec, span) : lapTimerSec)
-    : span;
+    : undefined;
 
   const altitudes = raw.map((point) => point.ele).filter((value): value is number => value != null);
   const heartRates = raw.map((point) => point.hr).filter((value): value is number => value != null);
@@ -74,7 +76,7 @@ export function parseTcx(text: string, fileName: string): ParsedFit {
   const session: FitSession = {
     startTime: firstTime,
     elapsedTime: span,
-    timerTime: timerSec,
+    timerTime,
     distance,
     calories: lapCalories > 0 ? lapCalories : undefined,
     sport,
@@ -84,8 +86,8 @@ export function parseTcx(text: string, fileName: string): ParsedFit {
       ? Math.round(heartRates.reduce((sum, value) => sum + value, 0) / heartRates.length)
       : undefined,
     maxSpeed: speeds.length ? Math.max(...speeds) : undefined,
-    avgSpeed: timerSec && timerSec > 0
-      ? distance / timerSec
+    avgSpeed: timerTime && timerTime > 0
+      ? distance / timerTime
       : span && span > 0
         ? distance / span
         : undefined,

@@ -87,6 +87,11 @@ final class NativeRouteScene implements NativeScene {
     private final String avgSpeedText;
     private final String caloriesText;
     private final double activitySeconds;
+    /** 运动时长（不含停留），尾页数据卡与 H5 口径一致 */
+    private final double movingSeconds;
+    /** 总时长（含停留）；没有时间戳时 elapsedAvailable=false，尾页不显示这一项 */
+    private final double elapsedSeconds;
+    private final boolean elapsedAvailable;
     private final String heart;
     private final String maxSpeedText;
     private final String maxAltitudeText;
@@ -212,6 +217,9 @@ final class NativeRouteScene implements NativeScene {
         this.avgSpeedText = payload.optString("avgSpeed", "");
         this.caloriesText = payload.optString("calories", "");
         this.activitySeconds = payload.optDouble("activityDurationSec", payload.optDouble("durationSec", 38));
+        this.movingSeconds = payload.optDouble("movingDurationSec", this.activitySeconds);
+        this.elapsedSeconds = payload.optDouble("elapsedDurationSec", this.activitySeconds);
+        this.elapsedAvailable = payload.optBoolean("elapsedAvailable", false);
         this.heart = payload.optString("maxHeart", "—");
         this.maxSpeedText = payload.optString("maxSpeed", "—");
         this.maxAltitudeText = payload.optString("maxAltitude", "—");
@@ -1958,7 +1966,10 @@ final class NativeRouteScene implements NativeScene {
 
         List<String[]> metrics = new ArrayList<>();
         metrics.add(new String[]{"route", "总距离", formatDistance(totalMeters), "公里", String.valueOf(accent)});
-        metrics.add(new String[]{"clock", "运动时长", formatClock(activitySeconds), "时:分:秒", String.valueOf(accent2)});
+        metrics.add(new String[]{"clock", "运动时长", formatClock(movingSeconds), "时:分:秒", String.valueOf(accent2)});
+        if (elapsedAvailable) {
+            metrics.add(new String[]{"hourglass", "总时长", formatClock(elapsedSeconds), "时:分:秒", String.valueOf(accent2)});
+        }
         if (!"—".equals(maxSpeedText) && !maxSpeedText.isEmpty()) {
             metrics.add(new String[]{"speedometer", "最快速度", maxSpeedText, "公里/小时", String.valueOf(ORANGE)});
         }
@@ -2205,6 +2216,52 @@ final class NativeRouteScene implements NativeScene {
             canvas.drawPath(glyph, line);
             fill.setColor(0xFFFFFFFF);
             canvas.drawCircle(0f, 0f, 1.4f, fill);
+        } else if ("hourglass".equals(kind)) {
+            line.setColor(color);
+            line.setStrokeWidth(2.2f);
+            // 上下横杠
+            glyph.reset();
+            glyph.moveTo(-7.5f, -9.5f);
+            glyph.lineTo(7.5f, -9.5f);
+            canvas.drawPath(glyph, line);
+            glyph.reset();
+            glyph.moveTo(-7.5f, 9.5f);
+            glyph.lineTo(7.5f, 9.5f);
+            canvas.drawPath(glyph, line);
+            // 杯身：上宽 → 腰 → 下宽
+            glyph.reset();
+            glyph.moveTo(-6.5f, -8f);
+            glyph.lineTo(6.5f, -8f);
+            glyph.quadTo(6.5f, -2f, 1.5f, 0f);
+            glyph.quadTo(6.5f, 2f, 6.5f, 8f);
+            glyph.lineTo(-6.5f, 8f);
+            glyph.quadTo(-6.5f, 2f, -1.5f, 0f);
+            glyph.quadTo(-6.5f, -2f, -6.5f, -8f);
+            glyph.close();
+            fill.setShader(new LinearGradient(0f, -8f, 0f, 8f,
+                    withAlpha(color, 0.5f), withAlpha(color, 0.12f), Shader.TileMode.CLAMP));
+            canvas.drawPath(glyph, fill);
+            fill.setShader(null);
+            // 沙：上仓剩余 + 流柱 + 下仓堆积
+            fill.setColor(0xE6FFFFFF);
+            glyph.reset();
+            glyph.moveTo(-3.4f, -6.5f);
+            glyph.lineTo(3.4f, -6.5f);
+            glyph.lineTo(0f, -1.5f);
+            glyph.close();
+            canvas.drawPath(glyph, fill);
+            glyph.reset();
+            glyph.moveTo(-2.6f, 7.6f);
+            glyph.lineTo(2.6f, 7.6f);
+            glyph.lineTo(0f, 3.4f);
+            glyph.close();
+            canvas.drawPath(glyph, fill);
+            line.setColor(0xB8FFFFFF);
+            line.setStrokeWidth(1f);
+            glyph.reset();
+            glyph.moveTo(0f, -1.2f);
+            glyph.lineTo(0f, 3.2f);
+            canvas.drawPath(glyph, line);
         } else if ("mountain".equals(kind)) {
             glyph.reset();
             glyph.moveTo(-11f, 8f);

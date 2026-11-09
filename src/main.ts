@@ -17,7 +17,8 @@ import { initRecords, type RecordsApi } from './ui/records';
 import { initImport, type ImportApi } from './ui/import-page';
 import { initMerge, type MergeApi } from './ui/merge-page';
 import { initTrash, type TrashApi } from './ui/trash-page';
-import { showToast, showToastAction } from './ui/toast';
+import { showToast } from './ui/toast';
+import { showActionSheet } from './ui/dialog';
 import { initPanels, refreshRemoteUsage, renderBackup, renderSettings } from './ui/panels';
 import { loadActivity, purgeExpiredTrash, setRemoteTrackResolver } from './store/repo';
 import { initMusic, currentMusicId, musicById } from './ui/music';
@@ -47,6 +48,10 @@ declare global {
       openUrl?: (url: string) => void;
       /** 输入框聚焦状态，原生用它决定长按是否放行（粘贴菜单） */
       setEditing?: (editing: boolean) => void;
+      /** 检查 MediaStore 里的视频是否还存在（用户可能已在相册删除） */
+      canShare?: (uri: string) => boolean;
+      /** 定向分享：wechat=微信 douyin=抖音 空串=系统分享面板；目标未安装返回 false */
+      shareUriTo?: (uri: string, mime: string, target: string) => boolean;
     };
   }
 }
@@ -78,6 +83,8 @@ const esEst = byId<HTMLSpanElement>('es-est');
 
 let currentStage: MotionStage | null = null;
 let currentActivity: Activity | null = null;
+/** 当前创作页记录的 id（示例轨迹没有 id）；导出记录与分享按钮用它做键 */
+let currentActivityId: string | null = null;
 let currentMap: TrackMap | null = null;
 let currentFollow: VectorFollowLayer | null = null;
 let currentOverview: OverviewVectorLayer | null = null;
@@ -285,6 +292,8 @@ function bindEvents(): void {
       requestExportCancel();
       return true;
     }
+    // 记录页批量选择模式：返回键先退出多选，不退出页面
+    if (records?.exitSelectingIfActive()) return true;
     if (overlayIsOpen('merge-overlay')) {
       merger?.close();
       return true;
@@ -437,6 +446,10 @@ function bindEvents(): void {
 
   byId<HTMLButtonElement>('export-btn').addEventListener('click', () => {
     void exportCurrent();
+  });
+  // 常驻分享按钮：导出过且视频还在手机上时显示，点击弹微信 / 抖音选择
+  byId<HTMLButtonElement>('share-video-btn').addEventListener('click', () => {
+    void shareExportedVideo();
   });
   byId<HTMLButtonElement>('stats-image-btn').addEventListener('click', () => {
     void exportStatsImage();
@@ -769,7 +782,7 @@ async function openRecord(meta: ActivityMeta): Promise<void> {
   showToast('正在载入这条记录…');
   try {
     const activity = await loadActivity(meta.id);
-    openStudio(activity);
+    openStudio(activity, meta.id);
   } catch (error) {
     console.error(error);
     showToast(errorMessage(error), true);
@@ -808,9 +821,10 @@ async function exportRecord(meta: ActivityMeta, format: TrackFormat): Promise<vo
   }
 }
 
-function openStudio(activity: Activity): void {
+function openStudio(activity: Activity, id: string | null = null): void {
   pausePlayback();
   currentActivity = activity;
+  currentActivityId = id;
   posterMode = activity.distanceM > MAX_VIDEO_METERS;
   setCacheReady(false);
   playhead = 0;
@@ -839,6 +853,7 @@ function closeStudio(): void {
   currentStage = null;
   currentMap = null;
   currentActivity = null;
+  currentActivityId = null;
   setCacheReady(false);
   playhead = 0;
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -861,22 +876,93 @@ function populateSide(activity: Activity): void {
     : '--';
   byId<HTMLElement>('total-distance').textContent = (activity.distanceM / 1000).toFixed(2);
   byId<HTMLElement>('total-duration').textContent = activity.durationAvailable
-    ? formatDuration(activity.durationSec, true)
+    ? formatDuration(activity.movingSec, true)
     : '--';
   byId<HTMLElement>('total-elapsed').textContent = activity.elapsedAvailable
     ? formatDuration(activity.elapsedSec, true)
     : '--';
-  byId<HTMLElement>('avg-hr').innerHTML = activity.avgHeartRate ? `${activity.avgHeartRate} <em>次/分钟</em>` : '--';
-  byId<HTMLElement>('avg-speed').innerHTML = activity.avgSpeedAvailable
-    ? `${formatSpeedKmh(activity.avgSpeed)} <em>公里/小时</em>`
-    : '--';
-  byId<HTMLElement>('max-altitude').innerHTML = activity.altitudeAvailable && activity.maxAltitude != null
-    ? `${Math.round(activity.maxAltitude)} <em>米</em>`
-    : '--';
-  byId<HTMLElement>('calories').innerHTML = activity.calories != null
-    ? `${Math.round(activity.calories)} <em>千卡</em>`
-    : '--';
+  setMetric('avg-hr', 'avg-hr-unit', activity.avgHeartRate ? String(Math.round(activity.avgHeartRate)) : '--', '次/分');
+  setMetric('avg-speed', 'avg-speed-unit', activity.avgSpeedAvailable ? formatSpeedKmh(activity.avgSpeed) : '--', 'km/h');
+  setMetric('max-altitude', 'max-altitude-unit',
+    activity.altitudeAvailable && activity.maxAltitude != null ? String(Math.round(activity.maxAltitude)) : '--', '米');
+  setMetric('calories', 'calories-unit', activity.calories != null ? String(Math.round(activity.calories)) : '--', '千卡');
   byId<HTMLElement>('stage-device').textContent = `${activeTheme().label} · 1080P MP4`;
+  syncShareButton();
+}
+
+/* ── 导出记录与常驻分享按钮 ─────────────────────────────────────── */
+
+interface VideoExportRecord {
+  uri: string;
+  mime: string;
+  at: number;
+}
+
+const EXPORTS_KEY = 'fitmotion.video-exports.v1';
+
+function readVideoExports(): Record<string, VideoExportRecord> {
+  try {
+    return JSON.parse(localStorage.getItem(EXPORTS_KEY) ?? '{}') as Record<string, VideoExportRecord>;
+  } catch {
+    return {};
+  }
+}
+
+function recordVideoExport(id: string, uri: string): void {
+  const all = readVideoExports();
+  all[id] = { uri, mime: 'video/mp4', at: Date.now() };
+  try {
+    localStorage.setItem(EXPORTS_KEY, JSON.stringify(all));
+  } catch {
+    // 存不下就算了，分享按钮这次不亮
+  }
+}
+
+/** 导出过且文件还在手机上（没被相册删掉）时才显示分享按钮。 */
+function syncShareButton(): void {
+  const button = document.getElementById('share-video-btn');
+  if (!button || !currentActivityId) return;
+  const record = readVideoExports()[currentActivityId];
+  const alive = Boolean(record && window.FitMotionAndroid?.canShare?.(record.uri));
+  button.hidden = !alive;
+}
+
+async function shareExportedVideo(): Promise<void> {
+  if (!currentActivityId) return;
+  const record = readVideoExports()[currentActivityId];
+  const bridge = window.FitMotionAndroid;
+  if (!record || !bridge?.shareUriTo) {
+    showToast('没有可分享的视频，先导出一次。', true);
+    return;
+  }
+  const choice = await showActionSheet({
+    title: '分享视频',
+    items: [
+      { key: 'wechat', label: '微信', note: '发给好友或群聊' },
+      { key: 'douyin', label: '抖音', note: '跳到抖音发布页' },
+      { key: 'more', label: '其他应用…', note: '系统分享面板' },
+    ],
+  });
+  if (!choice) return;
+  const target = choice === 'more' ? '' : choice;
+  if (!bridge.shareUriTo(record.uri, record.mime, target)) {
+    showToast(
+      target === 'wechat' ? '没有安装微信，或分享未完成。'
+        : target === 'douyin' ? '没有安装抖音，或分享未完成。'
+          : '分享面板拉起失败，可在相册里分享。',
+      true,
+    );
+  }
+}
+
+/** 数据面板：主值填 <b>，单位填旁边的 <em>；值缺失时单位一起隐藏。 */
+function setMetric(valueId: string, unitId: string, value: string, unit: string): void {
+  byId<HTMLElement>(valueId).textContent = value;
+  const unitEl = document.getElementById(unitId);
+  if (unitEl) {
+    unitEl.textContent = value === '--' ? '' : unit;
+    unitEl.hidden = value === '--';
+  }
 }
 
 /** 进入全屏播放：舞台铺满屏幕，自动从当前进度续播。 */
@@ -1299,6 +1385,10 @@ function nativeScenePayload(
     bitrate: 4_000_000,
     durationSec: durationSec,
     activityDurationSec: activity.durationSec,
+    // 尾页数据口径：运动时长用 movingSec（不含停留），总时长用 elapsedSec
+    movingDurationSec: activity.movingSec,
+    elapsedDurationSec: activity.elapsedSec,
+    elapsedAvailable: activity.elapsedAvailable,
     title: activity.title,
     subtitle: date ? `${activity.place} · ${date.date}` : activity.place,
     place: activity.place,
@@ -1490,14 +1580,11 @@ async function exportNativeScene(): Promise<void> {
       ['合计耗时', `${totalSeconds.toFixed(1)} 秒`],
       ['保存结果', result.uri ? '已保存到手机相册' : '未保存'],
     ]);
-    if (result.uri) {
-      const uri = result.uri;
-      showToastAction('视频已保存到手机相册', '分享', () => {
-        const bridge = window.FitMotionAndroid;
-        if (!bridge?.shareUri?.(uri, 'video/mp4')) {
-          showToast('分享面板拉起失败，可在相册里分享。', true);
-        }
-      });
+    if (result.uri && currentActivityId) {
+      // 记录导出结果：创作页的分享按钮由它点亮（文件还在手机上就一直可分享）
+      recordVideoExport(currentActivityId, result.uri);
+      syncShareButton();
+      showToast('视频已保存到手机相册，可用下方「分享视频」发给微信 / 抖音。');
     }
     if (result.audioNote) showToast('音乐混流失败，已导出静音版本。', true);
   } catch (error) {

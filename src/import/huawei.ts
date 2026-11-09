@@ -351,9 +351,12 @@ function parseHuaweiDetailRecord(record: Bag): HuaweiActivity | null {
   };
 
   const totalTimeMs = num(bag, ['totalTime']);
+  // totalTime 是华为自带的运动时长（不含停留）；拿不到就留空，
+  // 让 activity.ts 用点间停留检测估算——不能拿 elapsed 硬填，
+  // 否则运动时长永远等于总时长，均速也会被停车时间摊低。
   const timerTime = totalTimeMs != null && totalTimeMs > 0 && totalTimeMs <= elapsed * 1.05 * 1000
     ? Math.round(totalTimeMs / 1000)
-    : elapsed;
+    : undefined;
 
   const session: FitSession = {
     startTime: start || undefined,
@@ -472,7 +475,8 @@ export function parseHuaweiJson(text: string): HuaweiParseResult {
     const session: FitSession = {
       startTime: start || undefined,
       elapsedTime: elapsed,
-      timerTime: elapsed,
+      // 旧版兜底路径没有 totalTime：不伪造 timerTime，让 activity.ts 的
+      // 停留检测估算运动时长（填 elapsed 会让总时长与运动时长恒等）。
       distance,
       calories: num(item.holder, ['calorie', 'calories', 'totalCalorie']) ?? undefined,
       ascent: Math.round(ascent) || undefined,

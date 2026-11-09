@@ -1386,7 +1386,7 @@ export class MotionStage {
     const e = easeOutCubic(reveal);
     const metrics = [
       this.resultMetric('route', '总距离', true, (this.activity.distanceM / 1000).toFixed(2), '公里', this.c.accent),
-      this.resultMetric('clock', '运动时长', this.activity.durationAvailable, this.activity.durationAvailable ? formatDuration(this.activity.durationSec) : '', '时:分:秒', this.c.blue),
+      this.resultMetric('clock', '运动时长', this.activity.durationAvailable, this.activity.durationAvailable ? formatDuration(this.activity.movingSec) : '', '时:分:秒', this.c.blue),
       this.resultMetric('clock', '总时长', this.activity.elapsedAvailable, this.activity.elapsedAvailable ? formatDuration(this.activity.elapsedSec) : '', '时:分:秒', this.c.blue),
       this.resultMetric('speedometer', '最快速度', this.activity.maxSpeedAvailable, formatSpeedKmh(this.activity.maxSpeed), '公里/小时', this.c.orange),
       this.resultMetric('heart', '最高心率', this.activity.heartRateAvailable, this.activity.maxHeartRate ? String(Math.round(this.activity.maxHeartRate)) : '', '次/分钟', this.c.red),

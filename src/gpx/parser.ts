@@ -72,10 +72,12 @@ export function parseGpx(text: string, fileName: string): ParsedFit {
   const gpxClimb = readNumber(extScope, ['cumulativeClimb']);
   const gpxDecrease = readNumber(extScope, ['cumulativeDecrease']);
 
-  const timerSec = gpxTotalTime && gpxTotalTime > 0
+  // totalTime 是官方运动时长（不含停留）；没有就留空让停留检测估算，
+  // 不能拿点跨度（= 总耗时）硬填，否则运动时长恒等于总时长。
+  const timerTime = gpxTotalTime && gpxTotalTime > 0
     && (span == null || gpxTotalTime <= span * 1.05)
     ? gpxTotalTime
-    : span;
+    : undefined;
   const officialRatio = gpxTotalDistance && cumulative > 0 ? gpxTotalDistance / cumulative : 0;
   const distance = gpxTotalDistance && gpxTotalDistance > 0
     && officialRatio > 0.3 && officialRatio < 1.5
@@ -85,7 +87,7 @@ export function parseGpx(text: string, fileName: string): ParsedFit {
   const session: FitSession = {
     startTime: firstTime,
     elapsedTime: span,
-    timerTime: timerSec,
+    timerTime,
     distance,
     sport: sportHint,
     subSport: 0,
@@ -94,8 +96,8 @@ export function parseGpx(text: string, fileName: string): ParsedFit {
       ? Math.round(heartRates.reduce((sum, value) => sum + value, 0) / heartRates.length)
       : undefined,
     maxSpeed: speeds.length ? Math.max(...speeds) : undefined,
-    avgSpeed: timerSec && timerSec > 0
-      ? distance / timerSec
+    avgSpeed: timerTime && timerTime > 0
+      ? distance / timerTime
       : span && span > 0
         ? distance / span
         : undefined,
