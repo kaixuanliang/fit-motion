@@ -2,7 +2,7 @@
 
 把一条 `.fit` 或 `.gpx` 轨迹变成 **1080 × 1920 的第一视角动态运动短片**。项目完全在本地解析运动数据，不上传原始文件。
 
-![FIT MOTION 首页](screenshots/landing.png)
+![FIT MOTION · 成片效果（明亮模式最后一帧：总览地图 + 结尾数据面板）](screenshots/parity/poster-bright.png)
 
 ## 功能
 
@@ -136,25 +136,27 @@
 
 测试的 `20240922户外骑行.tcx` 中不含 `HeartRateBpm`、`HeartRate`、`Value` 等心率标签，也不含速度标签，因此无法显示最大心率；这不是解析丢失。界面会显示“文件未记录心率”。
 
-示例视频：[demo.mp4](screenshots/demo.mp4)
+示例视频：[docs/FitMotion-操作演示.mp4](docs/FitMotion-操作演示.mp4)
 
-![封面 / 第一帧 = 最后一帧](screenshots/cover.png)
+![第一视角跟随镜头、速度曲线与事件抽屉](screenshots/video-check/g60.jpg)
 
-![第一视角、经纬度与速度心电图](screenshots/final-run.png)
+![事件抽屉特写（科技模式：海拔、最快速度）](screenshots/parity/drawer-crop5.png)
 
-![圆形气泡与单项抽屉](screenshots/final-moment.png)
-
-![三个事件按顺序累积在梯形抽屉](screenshots/final-drawer.png)
-
-![结束数据面板](screenshots/final-result.png)
+视频封面、第一帧与结尾数据面板共用同一帧，即顶部成片效果图。
 
 夜间模式：
 
-![夜间模式](screenshots/theme-night.png)
+![夜间模式](screenshots/parity/poster-night.png)
 
 科技模式：
 
-![科技模式](screenshots/theme-tech.png)
+![科技模式](screenshots/parity/poster-tech.png)
+
+## 应用界面
+
+| 记录库 | 创作页 | 备份 |
+| --- | --- | --- |
+| ![记录库](screenshots/app/01-records-empty.png) | ![创作页](screenshots/app/17-create-music.png) | ![备份](screenshots/app/05-backup.png) |
 
 ## 使用与验证报告
 
