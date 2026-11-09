@@ -628,36 +628,96 @@ class BaiduAdapter implements SyncAdapter {
     };
   }
 
+  /** 列目录（probe 与「应用目录自动发现」共用）。 */
+  private async listDir(path: string, timeoutMs: number): Promise<{
+    errno?: number;
+    entries: Array<{ path?: string; server_filename?: string; isdir?: number }>;
+  }> {
+    const response = await request(
+      await this.api(`/xpan/file?method=list&dir=${encodeURIComponent(path)}&start=0&limit=100&web=1`),
+      { headers: BAIDU_UA },
+      timeoutMs,
+    );
+    const body = (await response.json().catch(() => ({}))) as {
+      errno?: number;
+      list?: Array<{ path?: string; server_filename?: string; isdir?: number }>;
+    };
+    return { errno: body.errno, entries: body.list ?? [] };
+  }
+
+  /**
+   * 探活：用「列自己的应用目录」验证 token 与路径。
+   *
+   * 不用 /xpan/quota —— 第三方应用调它一律返回
+   * HTTP 400 {"error_code":3,"error_msg":"Unsupported open api"}，
+   * 拿它当探活会永远「连接失败」。
+   */
   async probe(timeoutMs = 8000): Promise<ProbeResult> {
     const started = Date.now();
+    const latency = (): number => Date.now() - started;
     try {
-      const response = await request(`${await this.api('/xpan/quota?checkfree=1&checkexpire=1')}`, { headers: BAIDU_UA }, timeoutMs);
-      const latencyMs = Date.now() - started;
-      const body = (await response.json().catch(() => ({}))) as { errno?: number; total?: number; used?: number };
-      if (!response.ok || (body.errno != null && body.errno !== 0)) {
+      const root = await this.listDir(this.root, timeoutMs);
+      if (root.errno === 0) {
+        // 确保 fitmotion 子目录存在（已存在会报错，忽略）
+        await request(
+          await this.api('/xpan/file?method=create'),
+          this.form(`path=${encodeURIComponent(`${this.root}/fitmotion`)}&isdir=1&rtype=3&block_list=%5B%5D`),
+          timeoutMs,
+        ).catch(() => undefined);
         return {
-          ok: false,
-          latencyMs,
-          message: `百度网盘 ${baiduReason(body.errno, response.status)}`,
+          ok: true,
+          latencyMs: latency(),
+          message: `已连接 · ${this.root}`,
           usageBytes: 0,
         };
       }
-      // 确保应用目录下的 fitmotion 子目录存在（已存在会报错，忽略）
-      await request(
-        await this.api('/xpan/file?method=create'),
-        this.form(`path=${encodeURIComponent(`${this.root}/fitmotion`)}&isdir=1&rtype=3&block_list=%5B%5D`),
-        timeoutMs,
-      ).catch(() => undefined);
+
+      // 目录不存在：先试着建一次（首次授权后应用根目录可能还没落盘），
+      // 建不出来再判断是不是「应用名不一致」
+      if (root.errno === -9 || root.errno === -7 || root.errno === 12 || root.errno === 31066) {
+        await request(
+          await this.api('/xpan/file?method=create'),
+          this.form(`path=${encodeURIComponent(this.root)}&isdir=1&rtype=3&block_list=%5B%5D`),
+          timeoutMs,
+        ).catch(() => undefined);
+        const retry = await this.listDir(this.root, timeoutMs);
+        if (retry.errno === 0) {
+          await request(
+            await this.api('/xpan/file?method=create'),
+            this.form(`path=${encodeURIComponent(`${this.root}/fitmotion`)}&isdir=1&rtype=3&block_list=%5B%5D`),
+            timeoutMs,
+          ).catch(() => undefined);
+          return { ok: true, latencyMs: latency(), message: `已连接 · ${this.root}`, usageBytes: 0 };
+        }
+        const apps = await this.listDir('/apps', timeoutMs).catch(() => ({ errno: undefined, entries: [] }));
+        const names = apps.entries
+          .filter((entry) => entry.isdir === 1 || entry.path)
+          .map((entry) => {
+            const full = entry.path ?? `/apps/${entry.server_filename ?? ''}`;
+            return full.replace(/\/+$/, '');
+          })
+          .filter((name) => name && name !== '/apps');
+        const hint = names.length
+          ? `你的应用目录是 ${names.map((n) => n.replace(/^\/apps\//, 'apps/')).join('、')}，把「远端目录」改成它`
+          : '请到开放平台确认应用名，并把「远端目录」改成 apps/<应用名>';
+        return {
+          ok: false,
+          latencyMs: latency(),
+          message: `远端目录 ${this.root} 不存在。第三方应用只能读写自己的 /apps/<应用名>/，${hint}`,
+          usageBytes: 0,
+        };
+      }
+
       return {
-        ok: true,
-        latencyMs,
-        message: `已连接（网盘已用 ${Math.round((body.used ?? 0) / 1024 / 1024)} MB）`,
-        usageBytes: body.used ?? 0,
+        ok: false,
+        latencyMs: latency(),
+        message: `百度网盘 ${baiduReason(root.errno)}`,
+        usageBytes: 0,
       };
     } catch (error) {
       return {
         ok: false,
-        latencyMs: Date.now() - started,
+        latencyMs: latency(),
         message: error instanceof Error ? error.message : '连接失败',
         usageBytes: 0,
       };
