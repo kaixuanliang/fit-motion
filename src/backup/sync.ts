@@ -164,7 +164,10 @@ function normalizeTargets(raw: unknown): ProviderTargets | null {
   const list: ProviderConfig[] = [];
   const push = (config: unknown): void => {
     const row = config as ProviderConfig | null;
-    if (row && row.token && row.owner && row.repo) {
+    // 百度走设备码 OAuth，access_token 存在 baidu-auth 里，配置里 token 为空是正常的；
+    // 其他通道 token 必填。少这个豁免，百度配置会在读取时被静默丢弃，
+    // 探活根本不会发请求，界面只显示兜底的「连接失败」。
+    if (row && row.owner && row.repo && (row.token || row.owner === 'baidu')) {
       list.push({ token: row.token, owner: row.owner, repo: row.repo, branch: row.branch || 'main' });
     }
   };

@@ -511,8 +511,8 @@ async function bindProvider(id: ProviderId, mode: 'edit' | 'add' = 'edit', editI
     const mine = status.find((row) => row.id === id);
     if (!mine || !mine.ok) {
       setDot(id, 'bad');
-      setSyncProgress('百度网盘验证失败', 100, mine?.message ?? '连接失败');
-      void showAlert(mine?.message ?? '百度网盘连接失败', { title: '连接失败', tone: 'error' });
+      setSyncProgress('百度网盘验证失败', 100, mine?.message ?? '探活未返回结果');
+      void showAlert(mine?.message ?? '探活未返回结果，请重试一次；若反复出现请反馈', { title: '连接失败', tone: 'error' });
       return;
     }
     setDot(id, 'ok');
