@@ -563,6 +563,13 @@ const BAIDU_UA: Record<string, string> = {
 /** 普通用户单分片固定 4MB */
 const BAIDU_SLICE = 4 * 1024 * 1024;
 
+/** 容量提示用的粗略格式化，只在报错文案里出现 */
+function mib(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 MB';
+  const mb = bytes / (1024 * 1024);
+  return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb.toFixed(0)} MB`;
+}
+
 /** 百度 errno → 人能看懂的原因（400 最常见：缺 UA 或路径不在 /apps/ 下） */
 function baiduReason(errno: number | undefined, status = 0): string {
   switch (errno) {
@@ -580,6 +587,12 @@ function baiduReason(errno: number | undefined, status = 0): string {
     case 31061:
     case -8:
       return '文件已存在';
+    case 10:
+      // 官方文档：创建文件失败 —— 分片没传完 / size 与实际不一致 / 分片 MD5 对不上
+      return 'errno=10 创建文件失败：服务端没凑齐分片（分片上传失败或 MD5 不匹配）';
+    case -10:
+      // 官方文档：容量不足（precreate 与 create 都可能返回）
+      return 'errno=-10 网盘空间不足';
     case 12:
       return '目录不存在（先在 /apps/ 下建好应用目录）';
     case 31365:
@@ -753,12 +766,43 @@ class BaiduAdapter implements SyncAdapter {
   async put(path: string, text: string, _message: string): Promise<void> {
     const remote = this.remotePath(path);
     const bytes = new TextEncoder().encode(text);
+    const first = await this.uploadOnce(remote, bytes, false);
+    if (first.errno === 0) return;
+
+    // -10 是容量不足，重传没意义，直接把剩余空间报清楚
+    if (first.errno === -10) {
+      const quota = await this.quota().catch(() => null);
+      const left = quota ? `（已用 ${mib(quota.used)} / 共 ${mib(quota.total)}）` : '';
+      throw new RemoteError(`百度网盘容量不足${left}，清理网盘或扩容后再试`, 0);
+    }
+
+    // errno=10 多半是「服务端以为分片齐了，实际没有」——无视 precreate 的
+    // block_list，整份重传一次；仍失败才抛错，并把尺寸/分片数带上便于定位。
+    const retry = await this.uploadOnce(remote, bytes, true);
+    if (retry.errno === 0) return;
+    throw new RemoteError(
+      `创建文件失败 ${baiduReason(retry.errno)}（已自动整份重传一次，${retry.detail}）`,
+      0,
+    );
+  }
+
+  /**
+   * 一次完整的三步上传（precreate → superfile2 → create），返回 create 的 errno。
+   *
+   * `forceAll` 为真时无视 precreate 下发的「已有分片」清单全部重传：百度偶尔
+   * 会把上一次失败上传留下的半成品当成已完成，直接 create 就报 errno=10。
+   */
+  private async uploadOnce(
+    remote: string,
+    bytes: Uint8Array,
+    forceAll: boolean,
+  ): Promise<{ errno: number; detail: string }> {
     const size = bytes.length;
     const blockList = md5List(bytes);
-    // 1) precreate：拿 uploadid 与缺哪些分片
+    // 1) precreate：拿 uploadid 与缺哪些分片（rtype=3 覆盖同名文件）
     const pre = await request(
       await this.api('/xpan/file?method=precreate'),
-      this.form(`path=${encodeURIComponent(remote)}&size=${size}&isdir=0&autoinit=1`
+      this.form(`path=${encodeURIComponent(remote)}&size=${size}&isdir=0&autoinit=1&rtype=3`
         + `&block_list=${encodeURIComponent(JSON.stringify(blockList))}`),
       30000,
     );
@@ -772,7 +816,9 @@ class BaiduAdapter implements SyncAdapter {
     }
     if (!preBody.uploadid) throw new RemoteError('预上传没有返回 uploadid', pre.status || 0);
     // 2) 上传缺的分片（百度侧已有相同 MD5 的分片会跳过）
-    const pending = preBody.block_list ?? blockList.map((_, i) => i);
+    const pending = forceAll
+      ? blockList.map((_, i) => i)
+      : preBody.block_list ?? blockList.map((_, i) => i);
     const token = await getValidAccessToken();
     for (const seq of pending) {
       const start = seq * BAIDU_SLICE;
@@ -787,9 +833,30 @@ class BaiduAdapter implements SyncAdapter {
         { method: 'POST', body: form, headers: BAIDU_UA },
         120000,
       );
-      if (!up.ok) throw new RemoteError(`分片 ${seq} 上传失败 HTTP ${up.status}`, up.status);
+      // 分片接口 HTTP 200 也可能带 error_code：只判状态码会把失败当成功，
+      // 后面 create 就只剩一句 errno=10（分片校验不通过），无从定位。
+      const upText = await up.text().catch(() => '');
+      let upErr: number | null = null;
+      let upMsg = '';
+      try {
+        const upBody = JSON.parse(upText) as { error_code?: number; errno?: number; error_msg?: string };
+        const code = upBody.error_code ?? upBody.errno;
+        if (typeof code === 'number' && code !== 0) {
+          upErr = code;
+          upMsg = upBody.error_msg ?? '';
+        }
+      } catch {
+        // 百度成功时可能回纯文本，解析失败按成功处理
+      }
+      if (!up.ok || upErr != null) {
+        throw new RemoteError(
+          `分片 ${seq + 1}/${blockList.length} 上传失败：`
+          + (upErr != null ? `${baiduReason(upErr, up.status)}${upMsg ? ` ${upMsg}` : ''}` : `HTTP ${up.status}`),
+          up.status,
+        );
+      }
     }
-    // 3) create：合并落盘（rtype=3 表示覆盖同名文件）
+    // 3) create：合并落盘（rtype=3 覆盖同名文件）
     const create = await request(
       await this.api('/xpan/file?method=create'),
       this.form(`path=${encodeURIComponent(remote)}&size=${size}&isdir=0&rtype=3`
@@ -798,9 +865,30 @@ class BaiduAdapter implements SyncAdapter {
       30000,
     );
     const createBody = (await create.json().catch(() => ({}))) as { errno?: number };
-    if (createBody.errno != null && createBody.errno !== 0) {
-      throw new RemoteError(`创建文件失败 ${baiduReason(createBody.errno, create.status)}`, create.status);
-    }
+    return {
+      errno: createBody.errno ?? -1,
+      detail: `${size} B / ${blockList.length} 片`,
+    };
+  }
+
+  /** 网盘总容量与已用量（/api/quota 对第三方应用可用；/xpan/quota 不行）。 */
+  private async quota(): Promise<{ total: number; used: number } | null> {
+    const token = await getValidAccessToken();
+    const response = await request(
+      `https://pan.baidu.com/api/quota?checkfree=1&checkexpire=1&access_token=${encodeURIComponent(token)}`,
+      { headers: BAIDU_UA },
+      8000,
+    );
+    const body = (await response.json().catch(() => ({}))) as {
+      errno?: number;
+      total?: number;
+      quota?: number;
+      used?: number;
+    };
+    if (body.errno != null && body.errno !== 0) return null;
+    const total = Number(body.total ?? body.quota ?? 0);
+    if (!(total > 0)) return null;
+    return { total, used: Number(body.used ?? 0) };
   }
 
   async remove(path: string): Promise<void> {
