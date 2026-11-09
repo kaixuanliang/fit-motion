@@ -666,8 +666,10 @@ body {
   stroke-linejoin: round;
 }
 
-/* 分享视频：导出过且文件还在时才出现，描边样式与主导出按钮区分 */
+/* 分享视频：放在「导出 GPX / TCX / 长图」下方，描边样式与主导出按钮区分 */
 .cta.share-cta {
+  height: 40px;
+  font-size: 12.5px;
   background: transparent;
   color: var(--accent);
   border: 1px solid var(--accent);
@@ -1538,9 +1540,14 @@ body {
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 7px;
   flex: 0 0 auto;
+}
+
+/* 9 个指标两列排布，最后一张独占一行时拉通，避免右侧留空 */
+.metric-grid > .metric-card:last-child:nth-child(odd) {
+  grid-column: span 2;
 }
 
 .metric-card {

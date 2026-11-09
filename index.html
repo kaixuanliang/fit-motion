@@ -306,18 +306,16 @@
           </div>
 
           <div class="metric-grid">
+            <article class="metric-card"><span class="mi"><svg><use href="#i-route"/></svg></span><small>总距离</small><div><b id="total-distance">--</b><em>公里</em></div></article>
+            <article class="metric-card"><span class="mi"><svg><use href="#i-hourglass"/></svg></span><small>总时长</small><div><b id="total-elapsed">--</b></div></article>
+            <article class="metric-card"><span class="mi"><svg><use href="#i-clock"/></svg></span><small>运动时长</small><div><b id="total-duration">--</b></div></article>
+            <article class="metric-card"><span class="mi"><svg><use href="#i-bolt"/></svg></span><small>最快速度</small><div><b id="max-speed">--</b><em>km/h</em></div></article>
+            <article class="metric-card"><span class="mi"><svg><use href="#i-gauge"/></svg></span><small>平均速度</small><div><b id="avg-speed">--</b><em id="avg-speed-unit">km/h</em></div></article>
             <article class="metric-card"><span class="mi"><svg><use href="#i-heart"/></svg></span><small>最高心率</small><div><b id="max-hr">--</b><em>次/分</em></div></article>
             <article class="metric-card"><span class="mi"><svg><use href="#i-pulse"/></svg></span><small>平均心率</small><div><b id="avg-hr">--</b><em id="avg-hr-unit">次/分</em></div></article>
             <article class="metric-card"><span class="mi"><svg><use href="#i-flame"/></svg></span><small>消耗热量</small><div><b id="calories">--</b><em id="calories-unit">千卡</em></div></article>
-            <article class="metric-card"><span class="mi"><svg><use href="#i-bolt"/></svg></span><small>最快速度</small><div><b id="max-speed">--</b><em>km/h</em></div></article>
-            <article class="metric-card"><span class="mi"><svg><use href="#i-gauge"/></svg></span><small>平均速度</small><div><b id="avg-speed">--</b><em id="avg-speed-unit">km/h</em></div></article>
-            <article class="metric-card"><span class="mi"><svg><use href="#i-route"/></svg></span><small>总距离</small><div><b id="total-distance">--</b><em>公里</em></div></article>
-            <article class="metric-card"><span class="mi"><svg><use href="#i-clock"/></svg></span><small>运动时长</small><div><b id="total-duration">--</b></div></article>
-            <article class="metric-card"><span class="mi"><svg><use href="#i-hourglass"/></svg></span><small>总时长</small><div><b id="total-elapsed">--</b></div></article>
             <article class="metric-card"><span class="mi"><svg><use href="#i-mountain"/></svg></span><small>最高海拔</small><div><b id="max-altitude">--</b><em id="max-altitude-unit">米</em></div></article>
           </div>
-
-          <button class="cta share-cta" id="share-video-btn" type="button" hidden><svg><use href="#i-share"/></svg> 分享视频给好友</button>
 
           <div class="export-speed-card" id="export-speed-card">
             <div class="es-head">
@@ -335,7 +333,7 @@
           </div>
 
           <button class="cta" id="export-btn" type="button"><svg><use href="#i-download"/></svg> 导出 1080P MP4</button>
-          <p class="cta-note" id="export-help">1080 × 1920 · 30FPS · MP4<br />导出完成自动存入手机相册</p>
+          <p class="cta-note" id="export-help">1080 × 1920 · 30FPS · MP4 · 导出时请保持此页面在前台</p>
 
           <div class="sub-actions">
             <button class="sub" id="export-track-gpx" type="button">导出 GPX</button>
@@ -343,11 +341,7 @@
             <button class="sub" id="stats-image-btn" type="button">导出数据长图</button>
           </div>
 
-          <div class="file-strip">
-            <i class="tag" id="file-badge">FIT</i>
-            <span id="file-name">city_ride.fit</span>
-            <span id="file-meta">3,846 个轨迹点</span>
-          </div>
+          <button class="cta share-cta" id="share-video-btn" type="button"><svg><use href="#i-share"/></svg> 分享视频给好友</button>
 
           <button class="sub clear-cache-btn" id="clear-cache" type="button">清除地图缓存</button>
         </section>

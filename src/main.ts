@@ -18,7 +18,6 @@ import { initImport, type ImportApi } from './ui/import-page';
 import { initMerge, type MergeApi } from './ui/merge-page';
 import { initTrash, type TrashApi } from './ui/trash-page';
 import { showToast } from './ui/toast';
-import { showActionSheet } from './ui/dialog';
 import { initPanels, refreshRemoteUsage, renderBackup, renderSettings } from './ui/panels';
 import { loadActivity, purgeExpiredTrash, setRemoteTrackResolver } from './store/repo';
 import { initMusic, currentMusicId, musicById } from './ui/music';
@@ -447,9 +446,9 @@ function bindEvents(): void {
   byId<HTMLButtonElement>('export-btn').addEventListener('click', () => {
     void exportCurrent();
   });
-  // 常驻分享按钮：导出过且视频还在手机上时显示，点击弹微信 / 抖音选择
+  // 常驻分享按钮：直接唤起系统分享面板
   byId<HTMLButtonElement>('share-video-btn').addEventListener('click', () => {
-    void shareExportedVideo();
+    shareExportedVideo();
   });
   byId<HTMLButtonElement>('stats-image-btn').addEventListener('click', () => {
     void exportStatsImage();
@@ -546,7 +545,7 @@ function applyStudioModeUi(): void {
   } else {
     device.textContent = `${activeTheme().label} · 1080P MP4`;
     exportButton.innerHTML = '<svg><use href="#i-download"/></svg> 导出 1080P MP4';
-    help.innerHTML = '1080 × 1920 · 30FPS · MP4<br />导出时请保持此页面在前台';
+    help.innerHTML = '1080 × 1920 · 30FPS · MP4 · 导出时请保持此页面在前台';
   }
 }
 
@@ -861,9 +860,6 @@ function closeStudio(): void {
 
 function populateSide(activity: Activity): void {
   const date = activity.timeAvailable ? formatDateParts(activity.startTime) : null;
-  byId<HTMLElement>('file-badge').textContent = activity.sourceType.toUpperCase();
-  byId<HTMLElement>('file-name').textContent = activity.fileName;
-  byId<HTMLElement>('file-meta').textContent = `${formatInteger(activity.points.length)} 个轨迹点  ·  ${activity.sessionCount || 1} 个活动段${activity.heartRateAvailable ? '' : '  ·  文件未记录心率'}`;
   byId<HTMLElement>('activity-title').textContent = activity.title;
   byId<HTMLElement>('activity-sub').textContent = date
     ? `${activity.place}  ·  ${date.date} ${date.time}`
@@ -887,7 +883,6 @@ function populateSide(activity: Activity): void {
     activity.altitudeAvailable && activity.maxAltitude != null ? String(Math.round(activity.maxAltitude)) : '--', '米');
   setMetric('calories', 'calories-unit', activity.calories != null ? String(Math.round(activity.calories)) : '--', '千卡');
   byId<HTMLElement>('stage-device').textContent = `${activeTheme().label} · 1080P MP4`;
-  syncShareButton();
 }
 
 /* ── 导出记录与常驻分享按钮 ─────────────────────────────────────── */
@@ -918,40 +913,19 @@ function recordVideoExport(id: string, uri: string): void {
   }
 }
 
-/** 导出过且文件还在手机上（没被相册删掉）时才显示分享按钮。 */
-function syncShareButton(): void {
-  const button = document.getElementById('share-video-btn');
-  if (!button || !currentActivityId) return;
-  const record = readVideoExports()[currentActivityId];
-  const alive = Boolean(record && window.FitMotionAndroid?.canShare?.(record.uri));
-  button.hidden = !alive;
-}
-
-async function shareExportedVideo(): Promise<void> {
-  if (!currentActivityId) return;
-  const record = readVideoExports()[currentActivityId];
+/**
+ * 分享按钮常驻：直接唤起系统分享面板（不再让用户选微信/抖音）。
+ * 视频被删掉或压根没导出过时，提示先导出，而不是静默失败。
+ */
+function shareExportedVideo(): void {
   const bridge = window.FitMotionAndroid;
-  if (!record || !bridge?.shareUriTo) {
-    showToast('没有可分享的视频，先导出一次。', true);
+  const record = currentActivityId ? readVideoExports()[currentActivityId] : undefined;
+  if (!record || !bridge?.shareUriTo || !bridge.canShare?.(record.uri)) {
+    showToast('请先导出视频再分享', true);
     return;
   }
-  const choice = await showActionSheet({
-    title: '分享视频',
-    items: [
-      { key: 'wechat', label: '微信', note: '发给好友或群聊' },
-      { key: 'douyin', label: '抖音', note: '跳到抖音发布页' },
-      { key: 'more', label: '其他应用…', note: '系统分享面板' },
-    ],
-  });
-  if (!choice) return;
-  const target = choice === 'more' ? '' : choice;
-  if (!bridge.shareUriTo(record.uri, record.mime, target)) {
-    showToast(
-      target === 'wechat' ? '没有安装微信，或分享未完成。'
-        : target === 'douyin' ? '没有安装抖音，或分享未完成。'
-          : '分享面板拉起失败，可在相册里分享。',
-      true,
-    );
+  if (!bridge.shareUriTo(record.uri, record.mime, '')) {
+    showToast('分享面板拉起失败，可在相册里分享。', true);
   }
 }
 
@@ -1581,10 +1555,9 @@ async function exportNativeScene(): Promise<void> {
       ['保存结果', result.uri ? '已保存到手机相册' : '未保存'],
     ]);
     if (result.uri && currentActivityId) {
-      // 记录导出结果：创作页的分享按钮由它点亮（文件还在手机上就一直可分享）
+      // 记录导出结果：分享按钮据此找到最近一次导出的视频
       recordVideoExport(currentActivityId, result.uri);
-      syncShareButton();
-      showToast('视频已保存到手机相册，可用下方「分享视频」发给微信 / 抖音。');
+      showToast('视频已保存到手机相册，可用「分享视频给好友」发送。');
     }
     if (result.audioNote) showToast('音乐混流失败，已导出静音版本。', true);
   } catch (error) {
