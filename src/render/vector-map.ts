@@ -320,13 +320,33 @@ interface TileBitmap {
 }
 
 const BITMAP_PAD = 8;
-const BITMAP_CACHE_LIMIT = 64;
 /**
- * 每帧允许现烤（首次光栅化）的瓦片上限。倍速播放/倍速切换会让相机一帧
- * 跳进好几张新瓦片，若全部当场光栅化，单帧要几百毫秒 —— 表现为切换倍速
- * 后页面冻住。烤不完的瓦片下一帧补上，视觉上是瓦片渐进浮现，不冻页面。
+ * 瓦片位图缓存上限（Map 插入序 FIFO 淘汰）。旧值 64：视口 ~20 张 + 预热
+ * 前方瓦片不断插入时，刚升级的全尺寸位图几帧内就被挤出、重新用兜底位图
+ * 顶上 —— 表现为部分路网持续停留在低清。96 张 @450px ≈ 84MB，与位图共享
+ * 缓存预算（112MB）同量级；低内存设备维持 56。
  */
-const RASTER_BUDGET_PER_FRAME = 2;
+const BITMAP_CACHE_LIMIT = (() => {
+  try {
+    const gb = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
+    if (typeof gb === 'number' && gb > 0 && gb < 4) return 56;
+  } catch {
+    // 老内核没有 deviceMemory
+  }
+  return 96;
+})();
+/**
+ * 每帧允许现烤（首次光栅化）的时间预算。旧实现固定每帧 2 张，实测桌面端
+ * 一张 450px 全尺寸瓦片只要 1.3~2.1ms，镜头扫过新瓦片时 2 张根本不够，
+ * 其余瓦片整帧都用 128px 兜底位图拉伸 3.5 倍绘制 —— 表现为播放中道路网
+ * 「糊一下再变清晰」（长途骑行 13km/s 的地图流速下几乎全程存在）。
+ * 改为按时间预算：桌面一帧能升 5~8 张即时清晰，慢设备自动少烤几张开不冻。
+ */
+const RASTER_BUDGET_MS = 10;
+/** 单帧光栅化张数硬上限，防止个别超大瓦片把预算拖穿后仍无限烤。 */
+const RASTER_MAX_TILES_PER_FRAME = 16;
+/** 兜底位图边长：预算用完时的临时画面（约全尺寸 1/3 成本）。 */
+const HURRY_SIZE = 256;
 /** 总览层位图缓存字节预算：必须装得下一条长路线的全部瓦片（见 bitmapFor）。 */
 const OVERVIEW_BITMAP_BUDGET = 192 * 1024 * 1024;
 
@@ -606,7 +626,52 @@ export class VectorFollowLayer {
     await Promise.all(Array.from({ length: 8 }, () => worker()));
   }
 
-  draw(ctx: CanvasRenderingContext2D, camera: MapCamera, stageWidth: number, stageHeight: number): boolean {
+  /**
+   * 预热镜头即将进入的瓦片（烤成全尺寸）。播放中 renderAt 每帧调用一次：
+   * 按未来相机位置算可见范围，把还没到全尺寸的瓦片在镜头到达前烤好，
+   * 与 draw 共用同一帧光栅化时间预算。这样路网在进入视野前就是清晰的，
+   * 而不是进入视野后先用兜底位图顶一秒多（长途骑行 13km/s 的地图流速下
+   * 表现为全程道路网发糊）。
+   */
+  prewarm(
+    camera: MapCamera,
+    stageWidth: number,
+    stageHeight: number,
+    deadline: { until: number } | null,
+    maxTiles = 4,
+  ): void {
+    if (!this.active.size) return;
+    const scale = camera.scale;
+    // 与 draw 快路径同一条件：比例对不上时预热出来的尺寸会被丢弃，不做
+    if (this.renderScale !== null && Math.abs(scale - this.renderScale) >= 0.002) return;
+    const diff = VECTOR_ZOOM - this.base.zoom;
+    const worldScale = 2 ** diff;
+    const tileBaseSize = TILE_SIZE / worldScale;
+    const tilePixels = Math.max(32, Math.round(tileBaseSize * scale));
+    const left = camera.x - stageWidth / 2 / scale;
+    const right = camera.x + stageWidth / 2 / scale;
+    const top = camera.y - stageHeight / 2 / scale;
+    const bottom = camera.y + stageHeight / 2 / scale;
+    const x0 = Math.floor(((left + this.base.originX) * worldScale) / TILE_SIZE);
+    const x1 = Math.floor(((right + this.base.originX) * worldScale) / TILE_SIZE);
+    const y0 = Math.floor(((top + this.base.originY) * worldScale) / TILE_SIZE);
+    const y1 = Math.floor(((bottom + this.base.originY) * worldScale) / TILE_SIZE);
+    let done = 0;
+    for (let tileX = x0; tileX <= x1; tileX += 1) {
+      for (let tileY = y0; tileY <= y1; tileY += 1) {
+        const key = `${VECTOR_ZOOM}/${tileX}/${tileY}`;
+        const parsed = this.active.get(key);
+        if (!parsed) continue;
+        const cached = this.bitmaps.get(key);
+        if (cached && cached.size === tilePixels) continue;
+        if (done >= maxTiles || deadline === null || performance.now() >= deadline.until) return;
+        this.bitmapFor(parsed, tilePixels, key);
+        done += 1;
+      }
+    }
+  }
+
+  draw(ctx: CanvasRenderingContext2D, camera: MapCamera, stageWidth: number, stageHeight: number, deadline?: { until: number } | null): boolean {
     if (!this.active.size) return false;
     const diff = VECTOR_ZOOM - this.base.zoom;
     const worldScale = 2 ** diff;
@@ -631,6 +696,7 @@ export class VectorFollowLayer {
     // no rescaling) while removing thousands of per-frame strokes.
     const tilePixels = tileBaseSize * scale;
     if (this.renderScale === null) this.renderScale = scale;
+    const deadlineUntil = deadline?.until ?? performance.now() + RASTER_BUDGET_MS;
     if (Math.abs(scale - this.renderScale) < 0.002) {
       const fastX0 = Math.floor(((left + this.base.originX) * worldScale) / TILE_SIZE);
       const fastX1 = Math.floor(((right + this.base.originX) * worldScale) / TILE_SIZE);
@@ -638,6 +704,9 @@ export class VectorFollowLayer {
       const fastY1 = Math.floor(((bottom + this.base.originY) * worldScale) / TILE_SIZE);
       let painted = 0;
       let rasterized = 0;
+      const rasterBudgetLeft = (): boolean =>
+        rasterized < RASTER_MAX_TILES_PER_FRAME
+        && performance.now() < deadlineUntil;
       const dbg = (window as unknown as { __fmDrawDbg?: unknown }).__fmDrawDbg;
       for (let tileX = fastX0; tileX <= fastX1; tileX += 1) {
         for (let tileY = fastY0; tileY <= fastY1; tileY += 1) {
@@ -648,10 +717,15 @@ export class VectorFollowLayer {
             continue;
           }
           let cached = this.bitmaps.get(key);
-          if (!cached || cached.size !== Math.max(32, Math.round(tilePixels))) {
-            if (rasterized >= RASTER_BUDGET_PER_FRAME) {
-              // 预算用完也不留白：复用任何现成位图，或现烤一张约 128px 的
-              // 低清兜底（稀疏模式，成本约为全量的 1/9），先把色块顶上去；
+          if (cached && cached.size === Math.max(32, Math.round(tilePixels))) {
+            // LRU touch：重插把命中位图移到队尾，避免纯 FIFO 淘汰把
+            // 视野内常用瓦片挤出（预热每帧都在往队尾插新瓦片）
+            this.bitmaps.delete(key);
+            this.bitmaps.set(key, cached);
+          } else {
+            if (!rasterBudgetLeft()) {
+              // 预算用完也不留白：复用任何现成位图，或现烤一张约 256px 的
+              // 低清兜底（像素量约 1/3，成本 1/3），先把画面顶上去；
               // 之后帧有预算时走 bitmapFor 自动升级成全尺寸位图。
               cached = this.hurryBitmapFor(parsed, key) ?? undefined;
               if (!cached) {
@@ -664,6 +738,9 @@ export class VectorFollowLayer {
             }
           }
           const bitmap = cached;
+          if (dbg && bitmap.size < Math.max(32, Math.round(tilePixels)) - 1) {
+            (dbg as { lowRes: string[] }).lowRes.push(`${key}@${bitmap.size}<${Math.round(tilePixels)}`);
+          }
           const screenX = stageWidth / 2 + (tileX * tileBaseSize - this.base.originX - camera.x) * scale;
           const screenY = stageHeight / 2 + (tileY * tileBaseSize - this.base.originY - camera.y) * scale;
           // 位图边长可能与屏幕瓦片尺寸不同（兜底位图更小）：按比例拉伸绘制，
@@ -685,8 +762,7 @@ export class VectorFollowLayer {
       }
     }
 
-    const projectPoint = (tileX: number, tileY: number, point: TilePoint, extent: number): { x: number; y: number } => {
-      const worldX = tileX * tileBaseSize + (point.x / extent) * tileBaseSize - this.base.originX;
+    const projectPoint = (tileX: number, tileY: number, point: TilePoint, extent: number): { x: number; y: number } => {      const worldX = tileX * tileBaseSize + (point.x / extent) * tileBaseSize - this.base.originX;
       const worldY = tileY * tileBaseSize + (point.y / extent) * tileBaseSize - this.base.originY;
       return {
         x: stageWidth / 2 + (worldX - camera.x) * scale,
@@ -874,24 +950,25 @@ export class VectorFollowLayer {
   }
 
   /**
-   * 低清兜底位图：光栅化预算用完时的「不空白」保险。约 1/3 边长（像素量
-   * 1/9，且小于 256 时走稀疏绘制）现烤一张顶上，视觉上是短暂的柔和色块
-   * 而不是整块底色空白；key 与全尺寸位图共用，之后帧有预算时自动升级。
+   * 低清兜底位图：光栅化预算用完时的「不空白」保险。256px 现烤一张顶上
+   * （相对 450px 全尺寸像素量约 1/3、成本 1/3），拉伸倍率从旧 128 方案的
+   * 3.5x 降到 1.76x —— 兜底帧的路网只是略柔，不再是明显糊掉的粗线；
+   * key 与全尺寸位图共用，之后帧有预算时自动升级。
    */
   private hurryBitmapFor(parsed: ParsedTile, key: string): TileBitmap | null {
     const cached = this.bitmaps.get(key);
     // 已有任何尺寸的位图（哪怕不是当前屏幕尺寸）都比空白强，直接复用，
     // 绘制端会按 tilePixels/bitmap.size 拉伸对齐。
     if (cached) return cached;
-    const shared = sharedBitmapGet(this.theme.id, `${key}@128`);
+    const shared = sharedBitmapGet(this.theme.id, `${key}@${HURRY_SIZE}`);
     if (shared) return shared;
-    const entry = this.rasterizeTile(parsed, 128);
+    const entry = this.rasterizeTile(parsed, HURRY_SIZE);
     if (this.bitmaps.size >= BITMAP_CACHE_LIMIT) {
       const oldest = this.bitmaps.keys().next();
       if (!oldest.done) this.bitmaps.delete(oldest.value);
     }
     this.bitmaps.set(key, entry);
-    sharedBitmapSet(this.theme.id, `${key}@128`, entry);
+    sharedBitmapSet(this.theme.id, `${key}@${HURRY_SIZE}`, entry);
     return entry;
   }
 

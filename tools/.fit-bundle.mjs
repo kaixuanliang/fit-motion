@@ -402,6 +402,7 @@ function buildActivity(parsed, fileName) {
   }
   if (records.length < 2) throw new Error("\u8FD9\u4E2A FIT / GPX \u6587\u4EF6\u4E2D\u6CA1\u6709\u53EF\u7528\u7684 GPS \u8F68\u8FF9\u70B9");
   const cleaned = [];
+  let driftDropped = 0;
   for (let i = 0; i < records.length; i += 1) {
     const current = records[i];
     if (i > 0 && i < records.length - 1) {
@@ -412,13 +413,25 @@ function buildActivity(parsed, fileName) {
       const direct = haversine(previous.lat, previous.lon, next.lat, next.lon);
       const dt = ((current.timestamp ?? 0) - (previous.timestamp ?? 0)) / 1e3;
       if (dt > 0 && dPrev / dt > 55 && dNext > 180 && direct < Math.max(dPrev, dNext) * 0.45) {
+        driftDropped += 1;
         continue;
       }
     }
     if (cleaned.length > 0 && current.timestamp != null && current.timestamp <= (cleaned[cleaned.length - 1].timestamp ?? 0)) {
       continue;
     }
+    const last = cleaned[cleaned.length - 1];
+    if (last?.lat != null && last.lon != null && last.timestamp != null && current.lat != null && current.lon != null && current.timestamp != null) {
+      const dt = (current.timestamp - last.timestamp) / 1e3;
+      if (dt > 0 && haversine(last.lat, last.lon, current.lat, current.lon) / dt > 55) {
+        driftDropped += 1;
+        continue;
+      }
+    }
     cleaned.push(current);
+  }
+  if (driftDropped > 0) {
+    console.info(`[fit-motion] \u5DF2\u5254\u9664 ${driftDropped} \u4E2A GPS \u6F02\u79FB\u70B9`);
   }
   if (cleaned.length < 2) throw new Error("\u8FD9\u4E2A FIT / GPX \u6587\u4EF6\u4E2D\u6CA1\u6709\u8DB3\u591F\u7684 GPS \u8F68\u8FF9\u70B9");
   const points = [];
@@ -452,12 +465,20 @@ function buildActivity(parsed, fileName) {
   const timeAvailable = parsed.hasTimestamps && startTime > 0;
   const recordDuration = Math.max(0, (endTime - startTime) / 1e3);
   const durationAvailable = timeAvailable && ((session.elapsedTime ?? 0) > 0 || (session.timerTime ?? 0) > 0 || recordDuration > 0);
-  const actualDuration = session.elapsedTime ?? session.timerTime ?? recordDuration;
+  const actualDuration = session.timerTime && session.timerTime > 0 ? session.timerTime : session.elapsedTime ?? recordDuration;
   const durationSec = durationAvailable ? Math.max(1, actualDuration) : Math.max(20, routeDistanceM / 3.6);
-  const movingSec = durationAvailable ? Math.max(1, session.timerTime ?? actualDuration) : durationSec;
+  const elapsedSec = durationAvailable ? Math.max(1, session.elapsedTime ?? recordDuration) : durationSec;
+  const elapsedAvailable = durationAvailable && (session.elapsedTime ?? 0) > 0;
   const distanceM = session.distance && session.distance > 0 ? session.distance : routeDistanceM;
   const scale = distanceM / routeDistanceM;
   for (const point of points) point.distance *= scale;
+  const stopThreshold = STOP_SPEED_BY_KEY[sportKeyOf(session.sport)];
+  const nativeTimer = session.timerTime && session.timerTime > 0 && (elapsedSec <= 0 || session.timerTime < elapsedSec * 0.995) ? session.timerTime : null;
+  const estimatedMoving = timeAvailable && elapsedSec > 0 ? estimateMovingSec(points, elapsedSec, stopThreshold) : null;
+  const movingSec = durationAvailable ? Math.max(1, Math.min(
+    elapsedSec,
+    nativeTimer ?? estimatedMoving ?? actualDuration
+  )) : durationSec;
   const recordedSpeeds = points.map((point) => point.speed).filter(isNumber);
   const hasRecordedSpeeds = recordedSpeeds.length > 0;
   const speedValues = smoothSpeeds(points, movingSec, distanceM);
@@ -473,7 +494,7 @@ function buildActivity(parsed, fileName) {
   const computedMaxSpeed = hasRecordedSpeeds ? Math.max(...recordedSpeeds) : percentile(points.map((point) => point.speed).filter(isNumber), 0.995);
   const maxSpeed = maxSpeedAvailable ? session.maxSpeed && session.maxSpeed > 0 ? session.maxSpeed : computedMaxSpeed : 0;
   const avgSpeedAvailable = (session.avgSpeed ?? 0) > 0 || durationAvailable || hasRecordedSpeeds;
-  const avgSpeed = avgSpeedAvailable ? session.avgSpeed && session.avgSpeed > 0 ? session.avgSpeed : durationAvailable ? distanceM / movingSec : recordedSpeeds.reduce((sum, value) => sum + value, 0) / recordedSpeeds.length : 0;
+  const avgSpeed = avgSpeedAvailable ? durationAvailable && distanceM > 0 && movingSec > 0 ? distanceM / movingSec : session.avgSpeed && session.avgSpeed > 0 ? session.avgSpeed : recordedSpeeds.length ? recordedSpeeds.reduce((sum, value) => sum + value, 0) / recordedSpeeds.length : 0 : 0;
   const sportInfo = SPORTS[session.sport ?? -1] ?? { name: "\u8FD0\u52A8", key: "other" };
   const midpoint = points[Math.max(0, Math.floor(points.length / 2))];
   const peakHeart = points.reduce((best, point) => {
@@ -529,6 +550,8 @@ function buildActivity(parsed, fileName) {
     durationAvailable,
     durationSec,
     movingSec,
+    elapsedSec,
+    elapsedAvailable,
     distanceM,
     routeDistanceM,
     maxHeartRate,
@@ -559,6 +582,27 @@ function buildActivity(parsed, fileName) {
     maxSpeedPoint,
     maxAltitudePoint
   };
+}
+var STOP_SPEED_BY_KEY = {
+  ride: 0.7,
+  run: 0.4,
+  hike: 0.35,
+  swim: 0.3,
+  other: 0.5
+};
+function estimateMovingSec(points, elapsedSec, stopSpeed) {
+  let moving = 0;
+  for (let i = 1; i < points.length; i += 1) {
+    const dt = (points[i].t - points[i - 1].t) / 1e3;
+    if (dt <= 0 || dt > 120) continue;
+    const dd = points[i].distance - points[i - 1].distance;
+    if (dd / dt >= stopSpeed) moving += dt;
+  }
+  const scaled2 = elapsedSec > 0 ? moving : 0;
+  return scaled2 >= 1 ? scaled2 : elapsedSec;
+}
+function sportKeyOf(sport) {
+  return SPORTS[sport ?? -1]?.key ?? "other";
 }
 function buildSplits(points, startTime, totalDistance) {
   const splits = [];

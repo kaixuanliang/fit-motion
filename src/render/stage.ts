@@ -343,10 +343,19 @@ export class MotionStage {
     ctx.clearRect(0, 0, WIDTH, HEIGHT);
     ctx.fillStyle = this.c.stageBg;
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
+    // 本帧光栅化时间预算：绘制中的即时升级与镜头前方预热共用，
+    // 保证每帧额外渲染成本有硬上限（慢设备自动少烤，不冻帧）
+    const rasterDeadline = { until: performance.now() + 12 };
     if (!resultVisible && this.follow) {
-      const vectorDrawn = this.follow.draw(ctx, camera, WIDTH, HEIGHT);
+      const vectorDrawn = this.follow.draw(ctx, camera, WIDTH, HEIGHT, rasterDeadline);
       if (!vectorDrawn) this.map.draw(ctx, camera, WIDTH, HEIGHT);
       this.follow.ensureForProgress(timeline.progress);
+      // 预热镜头前方 ~1.2s 的瓦片：路网进入视野前就烤成全尺寸，
+      // 消除「糊一下再变清晰」（长途路线地图流速可达 13km/s）
+      const aheadTime = Math.min(t + 1.2, COVER_SECONDS + this.runEnd + 0.3);
+      if (aheadTime > t) {
+        this.follow.prewarm(this.cameraAtTime(aheadTime), WIDTH, HEIGHT, rasterDeadline);
+      }
     } else if (!this.overview?.draw(ctx, camera, WIDTH, HEIGHT)) {
       this.map.draw(ctx, camera, WIDTH, HEIGHT);
     }
