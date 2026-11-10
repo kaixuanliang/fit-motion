@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.fitmotion.app"
     android:versionCode="20261110"
-    android:versionName="1.1.21">
+    android:versionName="1.1.22">
     <!-- versionCode/versionName 由 android/build-apk.mjs 从 package.json 注入，
          这里只是占位；aapt2 link 会用命令行参数覆盖。 -->
 

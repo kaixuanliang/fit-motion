@@ -1588,6 +1588,11 @@ export class OverviewVectorLayer {
     return this.wanted > 0 && this.loaded >= this.wanted * 0.7;
   }
 
+  /** 诊断用：预取进度原貌（wanted/loaded/failed），复用捷径排查时看谁没达标 */
+  get prefetchStats(): { wanted: number; loaded: number; failed: number } {
+    return { wanted: this.wanted, loaded: this.loaded, failed: this.failed };
+  }
+
   get failedTiles(): number {
     return this.failed;
   }

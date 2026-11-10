@@ -102,6 +102,26 @@ let posterMode = false;
 let cacheReady = false;
 
 /**
+ * 创作页会话缓存：记录列表 ⇄ 创作页来回切换时，同一条记录 + 同一主题
+ * 直接复用上一轮已就绪的图层实例。图层实例里的 parsed/active/bitmaps/
+ * labelCandidates 全是热缓存，重进等于零成本；不缓存的话 closeStudio 的
+ * clear() 会把它们全丢掉，重进要重跑抓取→解码→预热→标签整条管线，
+ * 表现为「同一条数据第二次进入还是卡一下、又看一遍缓存进度」。
+ * 换记录 / 换主题 / 海报模式切换 / 清除缓存 / 重新导入都会使缓存失效。
+ */
+interface StudioSession {
+  activityId: string;
+  themeId: string;
+  posterMode: boolean;
+  /** 上一轮 prepareStudio 完整跑完（缓存门全过）才允许走复用捷径 */
+  ready: boolean;
+  map: TrackMap;
+  follow: VectorFollowLayer | null;
+  overview: OverviewVectorLayer;
+}
+let studioSession: StudioSession | null = null;
+
+/**
  * 缓存就绪标志。除了内部守卫，还挂到 window 上给端到端脚本用 ——
  * 靠 is-busy 类名猜状态会有竞态（点开记录到 mount 之间有一小段窗口）。
  */
@@ -378,6 +398,8 @@ async function boot(): Promise<void> {
     }
   });
   window.addEventListener('fitmotion:records-changed', () => {
+    // 重新导入可能改写同一条记录的内容，会话缓存的图层实例必须作废
+    studioSession = null;
     void records?.reload();
   });
   initMusic();
@@ -696,13 +718,37 @@ function rebuildStudioTheme(): void {
 
 function mountStudio(activity: Activity, theme: ReturnType<typeof activeTheme>, at: number, resume: boolean): void {
   const token = ++studioToken;
-  currentMap = new TrackMap(activity, theme, () => {
-    if (currentStage) currentStage.renderAt(playhead);
-  });
-  currentFollow = posterMode ? null : new VectorFollowLayer(activity, theme, currentMap);
-  currentOverview = new OverviewVectorLayer(theme, currentMap);
+  // 同一条记录 + 同一主题 + 同一模式 → 复用上一轮图层实例（即使上一轮没
+  // 跑完也复用：抓了一半的进度作废重来更亏）。键不匹配才整套重建。
+  const sessionId = currentActivityId;
+  const sessionHit = !!(studioSession && sessionId !== null
+    && studioSession.activityId === sessionId
+    && studioSession.themeId === theme.id
+    && studioSession.posterMode === posterMode);
+  if (sessionHit && studioSession) {
+    currentMap = studioSession.map;
+    currentFollow = studioSession.follow;
+    currentOverview = studioSession.overview;
+  } else {
+    currentMap = new TrackMap(activity, theme, () => {
+      if (currentStage) currentStage.renderAt(playhead);
+    });
+    currentFollow = posterMode ? null : new VectorFollowLayer(activity, theme, currentMap);
+    currentOverview = new OverviewVectorLayer(theme, currentMap);
+    studioSession = {
+      activityId: sessionId ?? '',
+      themeId: theme.id,
+      posterMode,
+      ready: false,
+      map: currentMap,
+      follow: currentFollow,
+      overview: currentOverview,
+    };
+  }
   currentStage = new MotionStage(stageCanvas, activity, currentMap, theme, currentFollow ?? undefined);
   currentStage.setOverview(currentOverview);
+  cacheMark(sessionHit ? 'session-hit' : 'session-miss');
+  (window as unknown as { __fmSession?: StudioSession | null }).__fmSession = studioSession;
   (window as unknown as { __fitStage?: MotionStage }).__fitStage = currentStage;
   setCacheReady(false);
   setStudioBusy(true);
@@ -715,7 +761,7 @@ function mountStudio(activity: Activity, theme: ReturnType<typeof activeTheme>, 
   if (!posterMode) void musicPlayer.prepare(currentMusicId(), currentStage.duration);
   // 原生预览跟着每次挂载重建（换记录/换主题 payload 都变了）
   engageGlPreview();
-  void prepareStudio(activity, theme, token, at, resume);
+  void prepareStudio(activity, theme, token, at, resume, sessionHit);
 }
 
 function applyStudioModeUi(): void {
@@ -769,7 +815,7 @@ function showCacheProgress(label: string, ratio: number): void {
  * 创作页准备阶段的性能打点。performance.mark 本身几乎零成本，
  * 留着方便用 performance.getEntriesByType('mark') 定位「哪一步慢」。
  */
-function cacheMark(step: string, detail?: Record<string, number>): void {
+function cacheMark(step: string, detail?: Record<string, unknown>): void {
   try {
     performance.mark(`fm:cache:${step}`, detail ? { detail } : undefined);
   } catch {
@@ -787,6 +833,7 @@ async function prepareStudio(
   token: number,
   at: number,
   resume: boolean,
+  reused = false,
 ): Promise<void> {
   const map = currentMap;
   const stage = currentStage;
@@ -795,87 +842,105 @@ async function prepareStudio(
   if (!map || !stage) return;
   try {
     cacheMark('start');
-    showCacheProgress(posterMode ? '正在缓存路线图底图' : '正在缓存地图瓦片', 0);
-    // 三个抓取任务相互独立（栅格底图 / 矢量总览 / 第一视角瓦片），全部并行。
-    // 旧的串行写法把每段的耗时加在一起，并行后总耗时 ≈ 最慢的一段。
-    const ratios = { raster: 0, overview: 0, follow: 0 };
-    const reportFetch = (label: string): void => {
-      const combined = posterMode
-        ? ratios.overview * 0.6 + ratios.raster * 0.4
-        : ratios.follow * 0.5 + ratios.overview * 0.3 + ratios.raster * 0.2;
-      showCacheProgress(label, combined * 0.85);
-    };
-    const rasterTask = map.loadTiles((progress) => {
+    // 会话复用捷径：同一条记录的图层实例还热着（瓦片已抓齐、位图已预热、
+    // 标签缓存已建好），整条抓取→解码→预热管线直接跳过，几百毫秒内出画面。
+    const sessionReady = reused && studioSession?.ready && map.usingTiles
+      && (!follow || follow.ready) && (overview ? overview.ready : false);
+    cacheMark('reuse-check', {
+      detail: {
+        reused: reused ? 1 : 0,
+        ready: studioSession?.ready ? 1 : 0,
+        usingTiles: map.usingTiles ? 1 : 0,
+        followReady: follow ? (follow.ready ? 1 : 0) : -1,
+        overviewReady: overview ? (overview.ready ? 1 : 0) : -1,
+        overviewStats: overview?.prefetchStats ?? null,
+      },
+    });
+    cacheMark(sessionReady ? 'reuse-hit' : 'reuse-miss');
+    if (!sessionReady) {
+      showCacheProgress(posterMode ? '正在缓存路线图底图' : '正在缓存地图瓦片', 0);
+      // 三个抓取任务相互独立（栅格底图 / 矢量总览 / 第一视角瓦片），全部并行。
+      // 旧的串行写法把每段的耗时加在一起，并行后总耗时 ≈ 最慢的一段。
+      const ratios = { raster: 0, overview: 0, follow: 0 };
+      const reportFetch = (label: string): void => {
+        const combined = posterMode
+          ? ratios.overview * 0.6 + ratios.raster * 0.4
+          : ratios.follow * 0.5 + ratios.overview * 0.3 + ratios.raster * 0.2;
+        showCacheProgress(label, combined * 0.85);
+      };
+      const rasterTask = map.loadTiles((progress) => {
+        if (token !== studioToken) return;
+        ratios.raster = progress;
+        reportFetch(posterMode ? '正在缓存路线图底图' : '正在缓存地图瓦片');
+      }).then(() => cacheMark('raster-done'));
+      // The vector overview is what the cover/result frames actually paint.
+      const overviewTask = (overview
+        ? overview.prefetch((done, total) => {
+          if (token !== studioToken) return;
+          ratios.overview = total ? done / total : 1;
+          reportFetch('正在缓存地图瓦片');
+        })
+        : Promise.resolve()).then(() => cacheMark('overview-fetched'));
+      // 第一视角瓦片是纯网络抓取（解码在 primeAll 里），不必等前两个任务。
+      const followFetchTask = (!posterMode && follow
+        ? follow.prefetch((done, total) => {
+          if (token !== studioToken) return;
+          ratios.follow = total ? done / total : 1;
+          reportFetch('正在缓存地图瓦片');
+        })
+        : Promise.resolve()).then(() => cacheMark('follow-fetched'));
+      await Promise.all([rasterTask, overviewTask, followFetchTask]);
+      cacheMark('tiles-fetched');
       if (token !== studioToken) return;
-      ratios.raster = progress;
-      reportFetch(posterMode ? '正在缓存路线图底图' : '正在缓存地图瓦片');
-    }).then(() => cacheMark('raster-done'));
-    // The vector overview is what the cover/result frames actually paint.
-    const overviewTask = (overview
-      ? overview.prefetch((done, total) => {
-        if (token !== studioToken) return;
-        ratios.overview = total ? done / total : 1;
-        reportFetch('正在缓存地图瓦片');
-      })
-      : Promise.resolve()).then(() => cacheMark('overview-fetched'));
-    // 第一视角瓦片是纯网络抓取（解码在 primeAll 里），不必等前两个任务。
-    const followFetchTask = (!posterMode && follow
-      ? follow.prefetch((done, total) => {
-        if (token !== studioToken) return;
-        ratios.follow = total ? done / total : 1;
-        reportFetch('正在缓存地图瓦片');
-      })
-      : Promise.resolve()).then(() => cacheMark('follow-fetched'));
-    await Promise.all([rasterTask, overviewTask, followFetchTask]);
-    cacheMark('tiles-fetched');
-    if (token !== studioToken) return;
-    if (!map.usingTiles && !overview?.ready) throw new Error('总览地图缓存不完整');
+      if (!map.usingTiles && !overview?.ready) throw new Error('总览地图缓存不完整');
 
-    if (!posterMode && follow) {
-      showCacheProgress('正在解码第一视角地图', 0.85);
-      await follow.primeAll((done, total) => {
-        if (token !== studioToken) return;
-        showCacheProgress('正在解码第一视角地图', 0.85 + (total ? done / total : 1) * 0.08);
-      });
-      stage.setFollow(follow);
-    }
-    cacheMark('follow-primed');
+      if (!posterMode && follow) {
+        showCacheProgress('正在解码第一视角地图', 0.85);
+        await follow.primeAll((done, total) => {
+          if (token !== studioToken) return;
+          showCacheProgress('正在解码第一视角地图', 0.85 + (total ? done / total : 1) * 0.08);
+        });
+        stage.setFollow(follow);
+      }
+      cacheMark('follow-primed');
 
-    // 逐张预热瓦片位图（每张让出主线程）。不预热的话，缓存完成后的第一帧要
-    // 现烤十几张瓦片（页面冻住一两秒、点播放没反应）；末帧整帧还会被
-    // posterCache 截走，截到缺块的画面就再也补不回来了。
-    const warmBase = posterMode ? 0.85 : 0.93;
-    const warmSpan = posterMode ? 0.15 : 0.07;
-    if (overview) {
-      showCacheProgress('正在生成地图画面', warmBase);
-      let overviewTiles = 0;
-      await overview.warmBitmaps(stage.resultCameraScale, (done, total) => {
-        overviewTiles = total;
-        if (token !== studioToken) return;
-        showCacheProgress('正在生成地图画面', warmBase + (total ? done / total : 1) * warmSpan * 0.2);
-      });
-      cacheMark('overview-warm', { tiles: overviewTiles, px: overview.lastRasterSize });
-      // 地名/国道标签候选也要在缓存阶段解码好，否则封面和成绩卡每帧都要
-      // 对全城瓦片跑 loadGeometry()，一帧几百毫秒（页面冻结、时间显示冻住）
-      let labelTiles = 0;
-      await overview.buildLabelCache((done, total) => {
-        labelTiles = total;
-        if (token !== studioToken) return;
-        showCacheProgress('正在生成地图画面', warmBase + warmSpan * (0.2 + (total ? done / total : 1) * 0.1));
-      });
-      cacheMark('labels-built', { tiles: labelTiles });
-    }
-    if (!posterMode && follow) {
-      let followTiles = 0;
-      await follow.warmBitmaps(stage.followCameraScale, (done, total) => {
-        followTiles = total;
-        if (token !== studioToken) return;
-        showCacheProgress('正在生成地图画面', warmBase + warmSpan * 0.3 + (total ? done / total : 1) * warmSpan * 0.7);
-      });
-      cacheMark('follow-warm', { tiles: followTiles });
+      // 逐张预热瓦片位图（每张让出主线程）。不预热的话，缓存完成后的第一帧要
+      // 现烤十几张瓦片（页面冻住一两秒、点播放没反应）；末帧整帧还会被
+      // posterCache 截走，截到缺块的画面就再也补不回来了。
+      const warmBase = posterMode ? 0.85 : 0.93;
+      const warmSpan = posterMode ? 0.15 : 0.07;
+      if (overview) {
+        showCacheProgress('正在生成地图画面', warmBase);
+        let overviewTiles = 0;
+        await overview.warmBitmaps(stage.resultCameraScale, (done, total) => {
+          overviewTiles = total;
+          if (token !== studioToken) return;
+          showCacheProgress('正在生成地图画面', warmBase + (total ? done / total : 1) * warmSpan * 0.2);
+        });
+        cacheMark('overview-warm', { tiles: overviewTiles, px: overview.lastRasterSize });
+        // 地名/国道标签候选也要在缓存阶段解码好，否则封面和成绩卡每帧都要
+        // 对全城瓦片跑 loadGeometry()，一帧几百毫秒（页面冻结、时间显示冻住）
+        let labelTiles = 0;
+        await overview.buildLabelCache((done, total) => {
+          labelTiles = total;
+          if (token !== studioToken) return;
+          showCacheProgress('正在生成地图画面', warmBase + warmSpan * (0.2 + (total ? done / total : 1) * 0.1));
+        });
+        cacheMark('labels-built', { tiles: labelTiles });
+      }
+      if (!posterMode && follow) {
+        let followTiles = 0;
+        await follow.warmBitmaps(stage.followCameraScale, (done, total) => {
+          followTiles = total;
+          if (token !== studioToken) return;
+          showCacheProgress('正在生成地图画面', warmBase + warmSpan * 0.3 + (total ? done / total : 1) * warmSpan * 0.7);
+        });
+        cacheMark('follow-warm', { tiles: followTiles });
+      }
     }
 
     if (token !== studioToken) return;
+    if (studioSession && studioSession.map === map) studioSession.ready = true;
     setCacheReady(true);
     setStudioBusy(false);
     // 首帧（含总览标签碰撞、海报缓存等一次性成本）必须在加载层还没揭掉时
@@ -951,6 +1016,8 @@ async function clearMapCacheAndReload(): Promise<void> {
   if (!(await confirmClearCache())) return;
   try {
     await Promise.all([clearBaseTileCache(), clearVectorTileCache(), clearMapSnapshots()]);
+    // 瓦片全没了，会话缓存里热着的图层实例自然也要作废
+    studioSession = null;
     showToast('地图缓存已清除，正在重新缓存…');
     if (currentActivity) {
       mountStudio(currentActivity, activeTheme(), 0, false);
@@ -1061,9 +1128,10 @@ function closeStudio(): void {
   showPane('records');
   studio.classList.remove('poster-mode', 'is-busy', 'fs');
   disengageGlPreview();
-  currentFollow?.clear();
+  // 注意：不再 clear() 图层实例。实例由 studioSession 持有，同一条记录
+  // 二次进入直接复用热缓存；换记录/换主题时实例被整体替换，GC 回收。
+  // 旧写法在这里 clear() 等于把会话缓存当场清空，重进必然重跑整条管线。
   currentFollow = null;
-  currentOverview?.clear();
   currentOverview = null;
   currentStage = null;
   currentMap = null;
