@@ -6,7 +6,7 @@
  * 同一条记录反复播放不会重新渲染。
  */
 
-import { renderMusicBuffer } from './synth';
+import { musicCacheKey, renderMusicBuffer } from './synth';
 
 export class MusicPlayer {
   private ctx: AudioContext | null = null;
@@ -20,7 +20,8 @@ export class MusicPlayer {
       this.clearBuffer();
       return;
     }
-    const key = `${trackId}:${duration.toFixed(2)}`;
+    // 键里带本地文件指纹：换了一首本地歌也要重新渲染，不能命中原缓冲
+    const key = await musicCacheKey(trackId, duration);
     if (key === this.key && this.buffer) return;
     this.stop();
     try {

@@ -118,6 +118,10 @@ export interface StoredTrack {
   hr: Int16Array | null;
   speed: Float32Array | null;
   dist: Float32Array | null;
+  /** 踏频（可为空；旧记录没有这两个字段，读的时候按缺失处理） */
+  cad?: Int16Array | null;
+  /** 功率（W） */
+  pwr?: Int16Array | null;
   hasTimestamps: boolean;
   sportHint: number;
   session: StoredSession;

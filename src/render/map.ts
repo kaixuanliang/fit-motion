@@ -15,6 +15,17 @@ export interface MapCamera {
 }
 
 /**
+ * 栅格底图成品快照（含 art 底 + 调色后的瓦片合成）。
+ *
+ * 每次进创作页都会 new 一个 TrackMap，若没有快照，整套「逐张解码 PNG →
+ * 整幅两趟像素调色 + 连通域 → 合成」要原样重跑（热缓存实测 2.3s，是
+ * 「正在缓存地图瓦片」的最大头）。而结果只取决于 zoom/原点/尺寸/主题/
+ * 路线包围盒/中心点 —— 相同就逐像素相同，直接整幅复制即可。
+ * 只保留最近一份（约 10~15MB）。
+ */
+let mapSnapshot: { key: string; canvas: HTMLCanvasElement } | null = null;
+
+/**
  * A self-contained map stage. It paints an art-directed fallback immediately,
  * then streams Esri's label-free light-gray base. Only the road and water
  * linework is kept on top of the art blocks, so the background never shows a
@@ -85,6 +96,26 @@ export class TrackMap {
     this.tilesFailed = 0;
     this.tilesComplete = false;
     this.usingTiles = false;
+
+    // 成品快照命中：整幅复制后立即就绪，跳过解码/调色/合成全流程。
+    const snapshotKey = this.snapshotKey();
+    if (mapSnapshot && mapSnapshot.key === snapshotKey) {
+      const ctx = this.canvas.getContext('2d')!;
+      ctx.clearRect(0, 0, this.width, this.height);
+      ctx.drawImage(mapSnapshot.canvas, 0, 0);
+      // 与 darkenTiles 收尾后的状态保持一致（rawCanvas 指向成品画布）
+      this.rawCanvas = this.canvas;
+      this.darkPaletteApplied = true;
+      this.usingTiles = true;
+      this.tilesComplete = true;
+      this.tilesDone = 1;
+      this.tilesTotal = 1;
+      this.tileProgress = 1;
+      onProgress?.(1);
+      this.update?.();
+      return;
+    }
+
     const tileRange = this.tileRange();
     const tiles: Array<[number, number]> = [];
     for (let x = tileRange.x0; x <= tileRange.x1; x += 1) {
@@ -125,6 +156,14 @@ export class TrackMap {
     await this.darkenTiles();
     this.usingTiles = true;
     this.tilesComplete = true;
+    // 保存成品快照，下次同参进页直接复制
+    try {
+      const snapshot = createCanvas(this.width, this.height);
+      snapshot.getContext('2d')!.drawImage(this.canvas, 0, 0);
+      mapSnapshot = { key: this.snapshotKey(), canvas: snapshot };
+    } catch {
+      // 快照失败不影响本次结果
+    }
     this.update?.();
   }
 
@@ -152,6 +191,14 @@ export class TrackMap {
       x: stageWidth / 2 + (point.x - camera.x) * camera.scale,
       y: stageHeight / 2 + (point.y - camera.y) * camera.scale,
     };
+  }
+
+  /** 成品画布只取决于这些输入，全部相同即逐像素相同（见 mapSnapshot 注释）。 */
+  private snapshotKey(): string {
+    const b = this.routeBounds;
+    return `${this.zoom}|${Math.round(this.originX)}|${Math.round(this.originY)}|${this.width}x${this.height}`
+      + `|${this.theme.id}|${Math.round(b.minX)},${Math.round(b.minY)},${Math.round(b.maxX)},${Math.round(b.maxY)}`
+      + `|${Math.round(this.activity.center.lat * 1000)},${Math.round(this.activity.center.lon * 1000)}`;
   }
 
   private tileRange(): { x0: number; x1: number; y0: number; y1: number } {

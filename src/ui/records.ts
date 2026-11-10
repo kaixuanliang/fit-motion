@@ -145,6 +145,16 @@ function renderChips(stats: { byYear: Record<string, number>; bySrc: Record<stri
 
   // 恢复年份条位置：innerHTML 重绘会重置横向滚动
   years.scrollLeft = yearsScrollLeft;
+  updateYearFade();
+}
+
+/** 还有年份被挡在右边时，给分类栏加渐隐提示（滑到底自动消失）。 */
+function updateYearFade(): void {
+  const years = $<HTMLDivElement>('cat-years');
+  const bar = $<HTMLDivElement>('cat-bar');
+  if (!years || !bar) return;
+  const hidden = years.scrollWidth - years.clientWidth - years.scrollLeft;
+  bar.classList.toggle('has-more', hidden > 2);
 }
 
 function renderList(reset: boolean, appendCount = PAGE_SIZE): void {
@@ -401,7 +411,10 @@ export function initRecords(onOpen: OpenHandler, hooks: RecordsHooks = {}): Reco
   // 年份条横向滚动位置：重绘 chips 后恢复，避免筛选时跳回最左
   $<HTMLDivElement>('cat-years')?.addEventListener('scroll', (event) => {
     yearsScrollLeft = (event.currentTarget as HTMLElement).scrollLeft;
+    updateYearFade();
   });
+  // 旋转屏幕 / 改窗口宽度后「还能不能滑」会变，提示跟着重算
+  window.addEventListener('resize', updateYearFade);
 
   // 批量选择条
   $<HTMLButtonElement>('batch-cancel')?.addEventListener('click', exitSelecting);

@@ -91,9 +91,13 @@ function packTrack(activity: Activity, id: string, session: StoredSession): Stor
   const hr = new Int16Array(count);
   const speed = new Float32Array(count);
   const dist = new Float32Array(count);
+  const cad = new Int16Array(count);
+  const pwr = new Int16Array(count);
   let hasAlt = false;
   let hasHr = false;
   let hasSpeed = false;
+  let hasCad = false;
+  let hasPwr = false;
   for (let i = 0; i < count; i += 1) {
     const point = activity.points[i];
     lat[i] = point.lat;
@@ -103,9 +107,13 @@ function packTrack(activity: Activity, id: string, session: StoredSession): Stor
     hr[i] = point.heartRate != null ? Math.round(point.heartRate) : -1;
     speed[i] = point.speed ?? -1;
     dist[i] = point.distance;
+    cad[i] = point.cadence != null ? Math.min(32767, Math.round(point.cadence)) : -1;
+    pwr[i] = point.power != null ? Math.min(32767, Math.round(point.power)) : -1;
     if (point.altitude != null) hasAlt = true;
     if (point.heartRate != null) hasHr = true;
     if (point.speed != null) hasSpeed = true;
+    if (point.cadence != null) hasCad = true;
+    if (point.power != null) hasPwr = true;
   }
   return {
     id,
@@ -116,6 +124,8 @@ function packTrack(activity: Activity, id: string, session: StoredSession): Stor
     hr: hasHr ? hr : null,
     speed: hasSpeed ? speed : null,
     dist,
+    cad: hasCad ? cad : null,
+    pwr: hasPwr ? pwr : null,
     hasTimestamps: activity.timeAvailable && count > 0 && t[count - 1] > t[0],
     sportHint: activity.sport,
     session,
@@ -530,6 +540,8 @@ function unpackRecords(track: StoredTrack): FitRecord[] {
       altitude: track.alt ? (track.alt[i] >= 0 ? track.alt[i] : undefined) : undefined,
       heartRate: track.hr ? (track.hr[i] > 0 ? track.hr[i] : undefined) : undefined,
       speed: track.speed ? (track.speed[i] >= 0 ? track.speed[i] : undefined) : undefined,
+      cadence: track.cad ? (track.cad[i] >= 0 ? track.cad[i] : undefined) : undefined,
+      power: track.pwr ? (track.pwr[i] >= 0 ? track.pwr[i] : undefined) : undefined,
       distance: track.dist ? track.dist[i] : undefined,
     });
   }

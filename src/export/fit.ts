@@ -142,6 +142,13 @@ function intOrNull(value: number | undefined): number | null {
   return raw > 0 ? raw : null;
 }
 
+/** 心率是 uint8，0xFF 为 FIT 的 invalid 值；30 以下基本是未佩戴传感器。 */
+function heartRateRaw(value: number | undefined): number | null {
+  if (value == null || !Number.isFinite(value)) return null;
+  const raw = Math.round(value);
+  return raw >= 30 && raw <= 254 ? raw : null;
+}
+
 /** 海拔：uint16，(米 + 500) × 5 */
 function altitudeRaw(value: number | undefined): number | null {
   if (value == null || !Number.isFinite(value)) return null;
@@ -193,7 +200,7 @@ export function activityToFit(activity: Activity): Uint8Array {
       semicircles(point.lat),
       semicircles(point.lon),
       altitudeRaw(point.altitude),
-      intOrNull(point.heartRate),
+      heartRateRaw(point.heartRate),
       intOrNull(point.cadence),
       point.distance != null ? Math.max(0, Math.round(point.distance * 100)) : null,
       point.speed != null && point.speed > 0 ? Math.min(65534, Math.round(point.speed * 1000)) : null,
@@ -245,8 +252,8 @@ export function activityToFit(activity: Activity): Uint8Array {
     calories,
     Math.min(65534, Math.round(avgSpeed * 1000)),
     activity.maxSpeedAvailable ? Math.min(65534, Math.round(activity.maxSpeed * 1000)) : null,
-    intOrNull(activity.avgHeartRate),
-    intOrNull(activity.maxHeartRate),
+    heartRateRaw(activity.avgHeartRate),
+    heartRateRaw(activity.maxHeartRate),
     intOrNull(activity.avgCadence),
     intOrNull(activity.maxCadence),
     activity.ascent != null ? Math.max(0, Math.min(65534, Math.round(activity.ascent))) : null,
@@ -291,8 +298,8 @@ export function activityToFit(activity: Activity): Uint8Array {
     calories,
     Math.min(65534, Math.round(avgSpeed * 1000)),
     activity.maxSpeedAvailable ? Math.min(65534, Math.round(activity.maxSpeed * 1000)) : null,
-    intOrNull(activity.avgHeartRate),
-    intOrNull(activity.maxHeartRate),
+    heartRateRaw(activity.avgHeartRate),
+    heartRateRaw(activity.maxHeartRate),
     intOrNull(activity.avgCadence),
     intOrNull(activity.maxCadence),
     activity.avgPower != null ? Math.min(65534, Math.round(activity.avgPower)) : null,

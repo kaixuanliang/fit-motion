@@ -1,4 +1,4 @@
-import { buildActivity, type Activity } from '../fit/activity';
+import { buildActivity, type Activity, type RoutePoint } from '../fit/activity';
 import { activityToFit } from './fit';
 import type { FitRecord, ParsedFit } from '../fit/types';
 
@@ -103,11 +103,37 @@ function isNumber(value: number | undefined): value is number {
   return value != null && Number.isFinite(value);
 }
 
+/**
+ * 心率过滤：FIT / TCX 的心率字段都是 uint8，0xFF(255) 在 FIT 里表示无效，
+ * 所以只放行 30~254；低于 30 基本是传感器未佩戴时的噪声。
+ */
+function heartRateValue(value: number | undefined): number | null {
+  if (value == null || !Number.isFinite(value)) return null;
+  const raw = Math.round(value);
+  if (raw < 30 || raw > 254) return null;
+  return raw;
+}
+
+/**
+ * GPX 1.1 标准本身没有心率字段，行业通用做法是 Garmin 的 TrackPointExtension，
+ * Garmin Connect / Strava / 华为运动健康 / 高驰都能识别 gpxtpx:hr。
+ */
+function gpxPointExtension(point: RoutePoint): string {
+  const parts: string[] = [];
+  const hr = heartRateValue(point.heartRate);
+  if (hr != null) parts.push(`<gpxtpx:hr>${hr}</gpxtpx:hr>`);
+  const cadence = point.cadence != null && Number.isFinite(point.cadence) ? Math.round(point.cadence) : null;
+  if (cadence != null && cadence > 0 && cadence < 255) parts.push(`<gpxtpx:cad>${cadence}</gpxtpx:cad>`);
+  if (!parts.length) return '';
+  return `<extensions><gpxtpx:TrackPointExtension>${parts.join('')}</gpxtpx:TrackPointExtension></extensions>`;
+}
+
 export function activityToGpx(activity: Activity): string {
   const points = activity.points.map((point) => {
     const ele = point.altitude != null ? `<ele>${point.altitude.toFixed(2)}</ele>` : '';
     const time = activity.timeAvailable && point.t > 0 ? `<time>${new Date(point.t).toISOString()}</time>` : '';
-    return `        <trkpt lat="${point.lat.toFixed(7)}" lon="${point.lon.toFixed(7)}">${ele}${time}</trkpt>`;
+    const ext = gpxPointExtension(point);
+    return `        <trkpt lat="${point.lat.toFixed(7)}" lon="${point.lon.toFixed(7)}">${ele}${time}${ext}</trkpt>`;
   }).join('\n');
   // 官方统计写进 extensions（与华为导出同构）：重新导入时解析器优先用
   // 这组值，时长/距离不会漂移，运动指纹也能对上（不会产生重复记录）。
@@ -117,7 +143,7 @@ export function activityToGpx(activity: Activity): string {
     ? `\n      <extensions>${activity.durationSec > 0 ? `<totalTime>${Math.round(activity.durationSec)}</totalTime>` : ''}${activity.distanceM > 0 ? `<totalDistance>${Math.round(activity.distanceM)}</totalDistance>` : ''}${climb}${drop}</extensions>`
     : '';
   return `<?xml version="1.0" encoding="UTF-8"?>
-<gpx version="1.1" creator="FIT MOTION" xmlns="http://www.topografix.com/GPX/1/1">
+<gpx version="1.1" creator="FIT MOTION" xmlns="http://www.topografix.com/GPX/1/1" xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v2">
   <metadata><name>${escapeXml(activity.title)}</name></metadata>
   <trk><name>${escapeXml(activity.title)}</name><type>${escapeXml(activity.sportName)}</type>${extensions}
     <trkseg>
@@ -133,21 +159,35 @@ export function activityToTcx(activity: Activity): string {
     const time = new Date(activity.timeAvailable ? point.t : Date.now() + index * 1000).toISOString();
     const altitude = point.altitude != null ? `<AltitudeMeters>${point.altitude.toFixed(2)}</AltitudeMeters>` : '';
     const distance = `<DistanceMeters>${point.distance.toFixed(2)}</DistanceMeters>`;
-    const hr = point.heartRate != null ? `<HeartRateBpm><Value>${Math.round(point.heartRate)}</Value></HeartRateBpm>` : '';
+    const hrRaw = heartRateValue(point.heartRate);
+    const hr = hrRaw != null ? `<HeartRateBpm><Value>${hrRaw}</Value></HeartRateBpm>` : '';
     const cadence = point.cadence != null ? `<Cadence>${Math.round(point.cadence)}</Cadence>` : '';
     const speed = point.speed != null ? `<Extensions><TPX xmlns="http://www.garmin.com/xmlschemas/ActivityExtension/v2"><Speed>${point.speed.toFixed(3)}</Speed></TPX></Extensions>` : '';
     return `        <Trackpoint><Time>${time}</Time><Position><LatitudeDegrees>${point.lat.toFixed(7)}</LatitudeDegrees><LongitudeDegrees>${point.lon.toFixed(7)}</LongitudeDegrees></Position>${altitude}${distance}${hr}${cadence}${speed}</Trackpoint>`;
   }).join('\n');
+  // Lap 层的心率汇总：Garmin Connect / 华为运动健康打开 TCX 时直接读这两个值，
+  // 没有它们只会在曲线上画心率，摘要区的心率是空的。
+  const avgHr = heartRateValue(activity.avgHeartRate);
+  const maxHr = heartRateValue(activity.maxHeartRate);
+  const lapAvg = avgHr != null ? `<AverageHeartRateBpm><Value>${avgHr}</Value></AverageHeartRateBpm>` : '';
+  const lapMax = maxHr != null ? `<MaximumHeartRateBpm><Value>${maxHr}</Value></MaximumHeartRateBpm>` : '';
   return `<?xml version="1.0" encoding="UTF-8"?>
-<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
-  <Activities><Activity Sport="${escapeXml(activity.sportName)}"><Id>${startIso}</Id>
-      <Lap StartTime="${startIso}"><TotalTimeSeconds>${activity.durationSec}</TotalTimeSeconds><DistanceMeters>${activity.distanceM.toFixed(2)}</DistanceMeters><Calories>${activity.calories ?? 0}</Calories><Intensity>Active</Intensity><TriggerMethod>Manual</TriggerMethod>
+<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2 http://www.garmin.com/xmlschemas/TrainingCenterDatabasev2.xsd">
+  <Activities><Activity Sport="${tcxSport(activity.sportKey)}"><Id>${startIso}</Id>
+      <Lap StartTime="${startIso}"><TotalTimeSeconds>${activity.durationSec}</TotalTimeSeconds><DistanceMeters>${activity.distanceM.toFixed(2)}</DistanceMeters><Calories>${activity.calories ?? 0}</Calories>${lapAvg}${lapMax}<Intensity>Active</Intensity><TriggerMethod>Manual</TriggerMethod>
         <Track>
 ${points}
         </Track>
       </Lap>
     </Activity></Activities>
 </TrainingCenterDatabase>`;
+}
+
+/** TCX 的 Sport 是枚举（Running / Biking / Other），写中文会被 Garmin 拒收。 */
+function tcxSport(key: Activity['sportKey']): string {
+  if (key === 'run') return 'Running';
+  if (key === 'ride') return 'Biking';
+  return 'Other';
 }
 
 export function downloadTrack(activity: Activity, format: TrackFormat): void {

@@ -19,3 +19,4 @@ tools/downloads/
 .workbuddy/
 *.genie
 .DS_Store
+screenshots/tmp-shot/

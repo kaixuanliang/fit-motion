@@ -210,11 +210,31 @@ body {
   align-items: center;
   flex: 0 0 auto;
   overflow: hidden;
+  position: relative;
+}
+
+/* 右侧还有年份被挡住时的渐隐提示：告诉用户这一条能往左滑 */
+.cat-bar.has-more::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 18px;
+  background: linear-gradient(to left, var(--bg), transparent);
+  pointer-events: none;
+}
+
+/* 一行里要塞下「格式 + 年份」，格式块越宽年份越看不到；
+   chip 比别处略紧凑，给年份条多留出可见宽度 */
+.cat-bar .chip {
+  padding: 5px 9px;
+  font-size: 11px;
 }
 
 .cat-fixed {
   display: flex;
-  gap: 6px;
+  gap: 5px;
   align-items: center;
   flex: 0 0 auto;
   position: relative;
@@ -239,10 +259,15 @@ body {
   display: flex;
   gap: 6px;
   overflow-x: auto;
-  flex: 0 0 auto;
+  /* 必须可收缩并拿到「剩余宽度」：flex-basis auto + 不收缩时，宽度会等于内容宽，
+     父级 overflow:hidden 直接把超出的年份裁掉，元素自己没有溢出也就滚不动 */
+  flex: 1 1 auto;
+  min-width: 0;
   margin-left: -18px;
   padding-left: 18px;
   scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
 }
 
 .cat-scroll::-webkit-scrollbar {
@@ -1356,13 +1381,31 @@ body {
   text-overflow: ellipsis;
 }
 
+/* ── 原生 OpenGL 预览：WebView 挖洞，原生 SurfaceView 从下层透出 ── */
+/* 只有从 html 到 stage-frame 这条叠层路径需要透明；其余元素自带
+   背景色照常绘制（卡片、按钮、输入框都在原生画面之上）。 */
+html.gl-preview,
+html.gl-preview body,
+html.gl-preview .app,
+html.gl-preview .pane-create,
+html.gl-preview .stage-hold,
+html.gl-preview .stage-frame {
+  background: transparent !important;
+}
+
+/* 网页核心画布退场：画面由原生渲染，留着会被 WebView 画在原生之上 */
+html.gl-preview #stage-canvas {
+  visibility: hidden;
+}
+
 .stage-frame {
   position: relative;
   flex: 0 0 auto;
   /* 满宽：容器撑满屏宽，中央 9:16 视频核心按容器高等比缩放居中，
-     左右两侧由 #stage-ambient 画延展地图（见 drawAmbient） */
+     左右两侧由 #stage-ambient 画延展地图（见 drawAmbient）。
+     高度给足：核心越矮，两侧黑带占比越大（曾被视为「大片空白」） */
   width: 100%;
-  height: min(52vh, 470px);
+  height: min(58vh, 540px);
   border-radius: 0;
   overflow: hidden;
   background: #0a1014;

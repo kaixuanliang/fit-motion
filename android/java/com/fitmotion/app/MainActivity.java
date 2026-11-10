@@ -64,6 +64,8 @@ public class MainActivity extends Activity {
     private FrameLayout splash;
     private long splashShownAt;
     private boolean splashHiding;
+    /** 根布局：原生预览 SurfaceView 要插到 WebView 底下 */
+    private FrameLayout rootLayout;
     /** 当前焦点是否在 H5 输入框里（长按要还给输入框，否则粘贴菜单出不来） */
     private boolean editingField;
     /** 上一次上报的键盘高度（CSS px），只在变化时回调 JS */
@@ -225,14 +227,14 @@ public class MainActivity extends Activity {
         });
 
         // WebView 垫底，开机封面盖在最上面；页面渲染完成后由 hideSplash 淡出
-        FrameLayout root = new FrameLayout(this);
-        root.addView(webView, new FrameLayout.LayoutParams(
+        rootLayout = new FrameLayout(this);
+        rootLayout.addView(webView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         splash = buildSplash();
         splashShownAt = SystemClock.uptimeMillis();
-        root.addView(splash, new FrameLayout.LayoutParams(
+        rootLayout.addView(splash, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        setContentView(root);
+        setContentView(rootLayout);
         webView.loadUrl("file:///android_asset/www/index.html");
         if (getIntent() != null && getIntent().getBooleanExtra(EXTRA_OPEN_EXPORT, false)) {
             webView.postDelayed(new Runnable() {
@@ -339,6 +341,44 @@ public class MainActivity extends Activity {
         return Math.round(TypedValue.applyDimension(
                 TypedValue.COMPLEX_UNIT_DIP, value, getResources().getDisplayMetrics()));
     }
+
+    FrameLayout rootLayout() {
+        return rootLayout;
+    }
+
+    /** WebView 透明化：原生预览期间让 WebView 露出底下的 SurfaceView。 */
+    void setWebViewTransparent(boolean transparent) {
+        if (webView == null) return;
+        webView.setBackgroundColor(transparent ? Color.TRANSPARENT : Color.rgb(5, 9, 10));
+    }
+
+    private final NativePreviewView.Callback previewCallback = new NativePreviewView.Callback() {
+        @Override
+        public void onReady(final int totalFrames) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    if (webView == null) return;
+                    webView.evaluateJavascript(
+                            "window.FitMotionJS&&FitMotionJS.nativePreviewReady(true," + totalFrames + ")", null);
+                }
+            });
+        }
+
+        @Override
+        public void onError(final String message) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    if (webView == null) return;
+                    String safe = message == null ? "" : message.replace("\\", "\\\\").replace("'", "\\'")
+                            .replace("\n", " ");
+                    webView.evaluateJavascript(
+                            "window.FitMotionJS&&FitMotionJS.nativePreviewReady(false,'" + safe + "')", null);
+                }
+            });
+        }
+    };
 
     private void openExportPage() {
         if (webView == null) return;
@@ -530,6 +570,30 @@ public class MainActivity extends Activity {
         public String nativeExportUrl() {
             if (nativeFrameServer == null) nativeFrameServer = new NativeFrameServer(MainActivity.this);
             return nativeFrameServer.start();
+        }
+
+        /** 原生 OpenGL 预览：开始准备场景（payload 与导出完全同一份）。 */
+        @JavascriptInterface
+        public void nativePreviewStart(String payloadJson) {
+            NativePreviewView.start(MainActivity.this, payloadJson, previewCallback);
+        }
+
+        /** 推进播放头（帧号），渲染线程画最新一帧。 */
+        @JavascriptInterface
+        public void nativePreviewFrame(int frame) {
+            NativePreviewView.postFrame(frame);
+        }
+
+        /** stage 核心区域在窗口里的位置（CSS px），摆 SurfaceView。 */
+        @JavascriptInterface
+        public void nativePreviewRect(double x, double y, double w, double h) {
+            NativePreviewView.layoutRect(MainActivity.this, x, y, w, h);
+        }
+
+        /** 离开创作页/导出前停掉预览并释放场景。 */
+        @JavascriptInterface
+        public void nativePreviewStop() {
+            NativePreviewView.stop();
         }
 
         @JavascriptInterface

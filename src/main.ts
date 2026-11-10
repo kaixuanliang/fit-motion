@@ -52,6 +52,14 @@ declare global {
       canShare?: (uri: string) => boolean;
       /** 定向分享：wechat=微信 douyin=抖音 空串=系统分享面板；目标未安装返回 false */
       shareUriTo?: (uri: string, mime: string, target: string) => boolean;
+      /** 原生 OpenGL 预览：开始渲染（payload 与导出同一份） */
+      nativePreviewStart?: (payloadJson: string) => void;
+      /** 推进播放头（帧号） */
+      nativePreviewFrame?: (frame: number) => void;
+      /** 视频核心区域位置（CSS px） */
+      nativePreviewRect?: (x: number, y: number, w: number, h: number) => void;
+      /** 停止并释放原生预览 */
+      nativePreviewStop?: () => void;
     };
   }
 }
@@ -125,6 +133,107 @@ let records: RecordsApi | null = null;
 let importer: ImportApi | null = null;
 let merger: MergeApi | null = null;
 let trash: TrashApi | null = null;
+
+/* ── 原生 OpenGL 预览（Android App 专属）────────────────────────
+ * 预览画面改由原生 NativeRouteScene 绘制——与导出成片是同一个渲染器，
+ * WebView 创作页 stage 区域挖空，原生 SurfaceView 垫在下层透出画面。
+ * 播放头仍由 JS 主导（背景音乐走 WebAudio），每帧把帧号推给原生。
+ * 网页渲染管线保留作兜底：海报模式、老版本 App、原生失败时照旧走网页。 */
+let glPreviewActive = false;
+let glPreviewReady = false;
+let glPreviewTotalFrames = 0;
+
+const glBridge = (): Window['FitMotionAndroid'] | null => {
+  const bridge = window.FitMotionAndroid;
+  return bridge && typeof bridge.nativePreviewStart === 'function' ? bridge : null;
+};
+
+/** 视频核心（9:16）在 stage-frame 内的实际位置；全屏与普通布局通用。 */
+function stageCoreRect(): { x: number; y: number; width: number; height: number } {
+  const frame = stageFrame.getBoundingClientRect();
+  let width = frame.height * (9 / 16);
+  let height = frame.height;
+  if (width > frame.width) {
+    width = frame.width;
+    height = width * (16 / 9);
+  }
+  return { x: frame.left + (frame.width - width) / 2, y: frame.top, width, height };
+}
+
+function syncGlPreviewRect(): void {
+  if (!glPreviewActive || !glBridge()) return;
+  const rect = stageCoreRect();
+  try {
+    window.FitMotionAndroid?.nativePreviewRect?.(rect.x, rect.y, rect.width, rect.height);
+  } catch { /* 老版本没有这个方法 */ }
+}
+
+function pushGlFrame(time: number): void {
+  if (!glPreviewReady || !currentStage || glPreviewTotalFrames <= 0) return;
+  const frame = Math.min(
+    glPreviewTotalFrames - 1,
+    Math.max(0, Math.round((time / currentStage.duration) * glPreviewTotalFrames)),
+  );
+  try {
+    window.FitMotionAndroid?.nativePreviewFrame?.(frame);
+  } catch { /* 老版本没有这个方法 */ }
+}
+
+/** 播放/拖动守卫：原生预览就绪后不必等网页瓦片缓存。 */
+function canPlayback(): boolean {
+  return cacheReady || (glPreviewActive && glPreviewReady);
+}
+
+function engageGlPreview(): void {
+  const bridge = glBridge();
+  if (!bridge || !currentStage || !currentActivity || posterMode || exporting) return;
+  const date = currentActivity.timeAvailable ? formatDateParts(currentActivity.startTime) : null;
+  const payload = nativeScenePayload(activeTheme(), date, currentStage.duration);
+  payload.fps = 30;
+  glPreviewActive = true;
+  glPreviewReady = false;
+  document.documentElement.classList.add('gl-preview');
+  try {
+    bridge.nativePreviewStart?.(JSON.stringify(payload));
+  } catch {
+    // 桥接异常：退回网页渲染
+    glPreviewActive = false;
+    document.documentElement.classList.remove('gl-preview');
+    return;
+  }
+  syncGlPreviewRect();
+}
+
+function disengageGlPreview(): void {
+  const wasActive = glPreviewActive;
+  glPreviewActive = false;
+  glPreviewReady = false;
+  glPreviewTotalFrames = 0;
+  document.documentElement.classList.remove('gl-preview');
+  if (wasActive) {
+    try { window.FitMotionAndroid?.nativePreviewStop?.(); } catch { /* ignore */ }
+  }
+}
+
+/** 原生回调（经 FitMotionJS.nativePreviewReady）：ok=false 时退回网页渲染。 */
+function glPreviewReadyCallback(ok: boolean, arg: number | string): void {
+  if (!glPreviewActive) return;
+  if (!ok) {
+    glPreviewActive = false;
+    glPreviewReady = false;
+    document.documentElement.classList.remove('gl-preview');
+    return;
+  }
+  const firstReady = !glPreviewReady;
+  glPreviewReady = true;
+  glPreviewTotalFrames = typeof arg === 'number' && arg > 0 ? arg : 0;
+  hideStageLoading();
+  setStudioBusy(false);
+  syncGlPreviewRect();
+  // 只有首次就绪才自动开播：App 切后台回来会重建 surface 并再次就绪，
+  // 那时应保持暂停（与网页缓存版行为一致），只把画面恢复出来
+  if (firstReady && !playing && !isStill && currentStage) startPlayback();
+}
 
 // 导出倍速记忆：默认 1×，换过就记住上次的选择。
 try {
@@ -209,13 +318,21 @@ async function boot(): Promise<void> {
   });
   initMusic();
   initKeyboard();
+  // 原生预览回调：keyboard 模块先建了 FitMotionJS 对象，这里往里补方法
+  const fitJs = ((window as unknown as { FitMotionJS?: Record<string, unknown> }).FitMotionJS
+    ??= {}) as Record<string, unknown>;
+  fitJs.nativePreviewReady = (ok: boolean, arg?: number | string) => glPreviewReadyCallback(ok, arg ?? 0);
+  // stage 位置跟着滚动/尺寸变，原生 SurfaceView 的摆位要同步跟上
+  document.addEventListener('scroll', () => syncGlPreviewRect(), true);
+  window.addEventListener('resize', () => syncGlPreviewRect());
   window.addEventListener('fitmotion:music-changed', () => {
     // 曲目变了：预渲染新缓冲；正在播放就从当前进度无缝切过去
     if (!currentStage) return;
     void (async () => {
       const token = studioToken;
       await musicPlayer.prepare(currentMusicId(), currentStage.duration);
-      if (playing && token === studioToken) await musicPlayer.play(playhead, 1);
+      // 倍速播放时换曲也要按当前倍速接上，否则音乐会慢半拍
+      if (playing && token === studioToken) await musicPlayer.play(playhead, Math.max(1, exportSpeed));
     })();
   });
   try {
@@ -406,7 +523,7 @@ function bindEvents(): void {
       }
       syncExportSpeedUi();
       // 点击倍速 = 以该倍速从头预览播放，导出也是同一个倍速（单一选中态）。
-      if (!exporting && currentStage && !posterMode && cacheReady) {
+      if (!exporting && currentStage && !posterMode && canPlayback()) {
         pausePlayback();
         playhead = 0;
         startPlayback();
@@ -532,6 +649,8 @@ function mountStudio(activity: Activity, theme: ReturnType<typeof activeTheme>, 
   syncExportSpeedUi();
   // 音乐缓冲在地图缓存的网络空档里悄悄渲染好，点播放立刻有声
   if (!posterMode) void musicPlayer.prepare(currentMusicId(), currentStage.duration);
+  // 原生预览跟着每次挂载重建（换记录/换主题 payload 都变了）
+  engageGlPreview();
   void prepareStudio(activity, theme, token, at, resume);
 }
 
@@ -565,6 +684,8 @@ function setStudioBusy(busy: boolean): void {
 
 function showCacheProgress(label: string, ratio: number): void {
   const percent = Math.max(0, Math.min(100, Math.round(ratio * 100)));
+  // 原生预览已就绪后，网页缓存进度不再把加载层盖回画面上
+  if (glPreviewReady) return;
   stageLoading.classList.add('cache-loading');
   stageLoading.classList.remove('is-hidden');
   if (!stageLoading.querySelector('.cache-meter')) {
@@ -578,6 +699,18 @@ function showCacheProgress(label: string, ratio: number): void {
   if (text) text.textContent = label;
   if (pct) pct.textContent = `${percent}%`;
   if (fill) fill.style.width = `${percent}%`;
+}
+
+/**
+ * 创作页准备阶段的性能打点。performance.mark 本身几乎零成本，
+ * 留着方便用 performance.getEntriesByType('mark') 定位「哪一步慢」。
+ */
+function cacheMark(step: string, detail?: Record<string, number>): void {
+  try {
+    performance.mark(`fm:cache:${step}`, detail ? { detail } : undefined);
+  } catch {
+    /* 老 WebView 没有 performance.mark，忽略 */
+  }
 }
 
 function hideStageLoading(): void {
@@ -597,6 +730,7 @@ async function prepareStudio(
   const overview = currentOverview;
   if (!map || !stage) return;
   try {
+    cacheMark('start');
     showCacheProgress(posterMode ? '正在缓存路线图底图' : '正在缓存地图瓦片', 0);
     // 三个抓取任务相互独立（栅格底图 / 矢量总览 / 第一视角瓦片），全部并行。
     // 旧的串行写法把每段的耗时加在一起，并行后总耗时 ≈ 最慢的一段。
@@ -611,24 +745,25 @@ async function prepareStudio(
       if (token !== studioToken) return;
       ratios.raster = progress;
       reportFetch(posterMode ? '正在缓存路线图底图' : '正在缓存地图瓦片');
-    });
+    }).then(() => cacheMark('raster-done'));
     // The vector overview is what the cover/result frames actually paint.
-    const overviewTask = overview
+    const overviewTask = (overview
       ? overview.prefetch((done, total) => {
         if (token !== studioToken) return;
         ratios.overview = total ? done / total : 1;
         reportFetch('正在缓存地图瓦片');
       })
-      : Promise.resolve();
+      : Promise.resolve()).then(() => cacheMark('overview-fetched'));
     // 第一视角瓦片是纯网络抓取（解码在 primeAll 里），不必等前两个任务。
-    const followFetchTask = !posterMode && follow
+    const followFetchTask = (!posterMode && follow
       ? follow.prefetch((done, total) => {
         if (token !== studioToken) return;
         ratios.follow = total ? done / total : 1;
         reportFetch('正在缓存地图瓦片');
       })
-      : Promise.resolve();
+      : Promise.resolve()).then(() => cacheMark('follow-fetched'));
     await Promise.all([rasterTask, overviewTask, followFetchTask]);
+    cacheMark('tiles-fetched');
     if (token !== studioToken) return;
     if (!map.usingTiles && !overview?.ready) throw new Error('总览地图缓存不完整');
 
@@ -640,6 +775,7 @@ async function prepareStudio(
       });
       stage.setFollow(follow);
     }
+    cacheMark('follow-primed');
 
     // 逐张预热瓦片位图（每张让出主线程）。不预热的话，缓存完成后的第一帧要
     // 现烤十几张瓦片（页面冻住一两秒、点播放没反应）；末帧整帧还会被
@@ -648,22 +784,31 @@ async function prepareStudio(
     const warmSpan = posterMode ? 0.15 : 0.07;
     if (overview) {
       showCacheProgress('正在生成地图画面', warmBase);
+      let overviewTiles = 0;
       await overview.warmBitmaps(stage.resultCameraScale, (done, total) => {
+        overviewTiles = total;
         if (token !== studioToken) return;
         showCacheProgress('正在生成地图画面', warmBase + (total ? done / total : 1) * warmSpan * 0.2);
       });
+      cacheMark('overview-warm', { tiles: overviewTiles, px: overview.lastRasterSize });
       // 地名/国道标签候选也要在缓存阶段解码好，否则封面和成绩卡每帧都要
       // 对全城瓦片跑 loadGeometry()，一帧几百毫秒（页面冻结、时间显示冻住）
+      let labelTiles = 0;
       await overview.buildLabelCache((done, total) => {
+        labelTiles = total;
         if (token !== studioToken) return;
         showCacheProgress('正在生成地图画面', warmBase + warmSpan * (0.2 + (total ? done / total : 1) * 0.1));
       });
+      cacheMark('labels-built', { tiles: labelTiles });
     }
     if (!posterMode && follow) {
+      let followTiles = 0;
       await follow.warmBitmaps(stage.followCameraScale, (done, total) => {
+        followTiles = total;
         if (token !== studioToken) return;
         showCacheProgress('正在生成地图画面', warmBase + warmSpan * 0.3 + (total ? done / total : 1) * warmSpan * 0.7);
       });
+      cacheMark('follow-warm', { tiles: followTiles });
     }
 
     if (token !== studioToken) return;
@@ -673,6 +818,7 @@ async function prepareStudio(
     // 画完，否则用户看到的是「缓存 100% 后页面冻一下才开始播」。
     playhead = posterMode ? 0 : at;
     stage.renderAt(playhead);
+    cacheMark('first-frame');
     drawAmbient();
     updateTransport();
     syncExportSpeedUi();
@@ -850,6 +996,7 @@ function closeStudio(): void {
   musicPlayer.stop();
   showPane('records');
   studio.classList.remove('poster-mode', 'is-busy', 'fs');
+  disengageGlPreview();
   currentFollow?.clear();
   currentFollow = null;
   currentOverview?.clear();
@@ -946,13 +1093,14 @@ function setMetric(valueId: string, unitId: string, value: string, unit: string)
 
 /** 进入全屏播放：舞台铺满屏幕，自动从当前进度续播。 */
 function enterFullScreen(): void {
-  if (!currentStage || posterMode || !cacheReady) return;
+  if (!currentStage || posterMode || !canPlayback()) return;
   fsActive = true;
   studio.classList.add('fs');
   const title = document.getElementById('fs-title');
   if (title) title.textContent = currentActivity?.title ?? '';
   syncFsThemeTag(activeTheme().label);
   updateTransport();
+  syncGlPreviewRect();
   if (!playing) startPlayback();
 }
 
@@ -962,10 +1110,11 @@ function exitFullScreen(): void {
   fsActive = false;
   studio.classList.remove('fs');
   pausePlayback();
+  syncGlPreviewRect();
 }
 
 function togglePlay(): void {
-  if (!currentStage || posterMode || !cacheReady) return;
+  if (!currentStage || posterMode || !canPlayback()) return;
   if (playing) {
     pausePlayback();
   } else {
@@ -978,7 +1127,7 @@ function togglePlay(): void {
 }
 
 function startPlayback(): void {
-  if (!currentStage || playing || posterMode || !cacheReady) return;
+  if (!currentStage || playing || posterMode || !canPlayback()) return;
   if (playhead >= currentStage.duration - 0.03) playhead = 0;
   playing = true;
   basePlayhead = playhead;
@@ -1016,16 +1165,22 @@ async function syncMusicToPlayhead(): Promise<void> {
 
 function tick(now: number): void {
   if (!currentStage || !playing) return;
+  // 测试钩子：预览播放头（供 e2e 工具采样，无运行时成本）
+  (window as unknown as { __fitPlayhead?: number }).__fitPlayhead = playhead;
   // 预览倍速与导出倍速共用 exportSpeed（同一选中态）：预览按倍速推进播放头，
   // 导出成片同样按倍速压缩时间线，两边看到的节奏一致。
-  // 播放头逐帧推进并限幅（单帧最多走 0.25s×倍速）：主线程若被偶发长任务
-  // 冻住，墙钟差会把播放头一下推到几十秒外（表现为「进度条突然跳到中间」）；
-  // 限幅后冻结只是一次短暂停顿，恢复后从原位继续。
+  // 播放头逐帧推进并限幅（单帧最多走 1.5s×倍速）：限幅只拦截「主线程被
+  // 冻住几秒」的墙钟跳变（表现为进度条突然跳到中间）。上限不能压到 0.25s：
+  // 长轨迹在手机上单帧渲染经常超过 250ms，限幅会把画面时间线拉长 20%+，
+  // 而音乐缓冲走真实墙钟不受限幅——结果就是「音乐提前放完、画面还剩好几秒」。
   const rate = Math.max(1, exportSpeed);
-  const next = basePlayhead + Math.min(0.25 * rate, ((now - baseWall) / 1000) * rate);
+  const wallDelta = (now - baseWall) / 1000;
+  const clamped = wallDelta * rate > 1.5 * rate;
+  const next = basePlayhead + Math.min(1.5 * rate, wallDelta * rate);
   if (next >= currentStage.duration) {
     playhead = currentStage.duration;
-    currentStage.renderAt(playhead);
+    if (glPreviewActive && glPreviewReady) pushGlFrame(playhead);
+    else currentStage.renderAt(playhead);
     playing = false;
     musicPlayer.stop();
     updatePlayButton();
@@ -1035,16 +1190,29 @@ function tick(now: number): void {
   playhead = next;
   basePlayhead = playhead;
   baseWall = now;
-  currentStage.renderAt(playhead);
-  drawAmbient();
+  if (glPreviewActive && glPreviewReady) {
+    // 画面由原生渲染：本帧只推帧号，省掉整幅 Canvas 重绘
+    pushGlFrame(playhead);
+  } else {
+    currentStage.renderAt(playhead);
+    drawAmbient();
+  }
+  // 真发生了限幅（冻结/极端卡顿）：画面时间线与音乐墙钟脱节，把音乐拉回播放头
+  if (clamped && musicPlayer.playing()) {
+    void syncMusicToPlayhead();
+  }
   updateTransport();
   raf = requestAnimationFrame(tick);
 }
 
 function renderCurrent(time: number): void {
   if (!currentStage) return;
-  currentStage.renderAt(time);
-  drawAmbient();
+  if (glPreviewActive && glPreviewReady) {
+    pushGlFrame(time);
+  } else {
+    currentStage.renderAt(time);
+    drawAmbient();
+  }
   updateTransport();
   updatePlayButton();
 }
@@ -1062,7 +1230,14 @@ function drawAmbient(): void {
   const ctx = ambientCanvas.getContext('2d');
   if (!ctx) return;
   const frameRect = stageFrame.getBoundingClientRect();
-  const coreRect = stageCanvas.getBoundingClientRect();
+  // 原生预览模式下网页核心画布被隐藏（getBoundingClientRect 会是 0），
+  // 核心矩形改用 9:16 数学推算，与原生 SurfaceView 的摆位完全一致
+  const coreRect = glPreviewActive
+    ? stageCoreRect()
+    : stageCanvas.getBoundingClientRect();
+  const coreLeftCss = glPreviewActive
+    ? coreRect.x - frameRect.left
+    : (frameRect.width - coreRect.width) / 2;
   if (frameRect.width < 2 || coreRect.width < 2) return;
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   const width = Math.round(frameRect.width * dpr);
@@ -1084,15 +1259,21 @@ function drawAmbient(): void {
     // 视野内没有可用瓦片：铺背景色，避免残影
     ctx.fillStyle = '#0a1014';
     ctx.fillRect(0, 0, width, height);
-    return;
   }
-  // 只压暗核心两侧的条带，不盖住核心区域，避免中缝出现明暗分界
-  const coreLeft = Math.round(((frameRect.width - coreRect.width) / 2) * dpr);
+  // 只压暗核心两侧的条带，不盖住核心区域，避免中缝出现明暗分界。
+  // 之前 0.68 太重，明亮主题下两侧几乎成黑边，观感是「视频两边大片空白」；
+  // 0.42 保留主次关系（两侧仍明显比核心暗）但能看清是地图延续。
+  const coreLeft = Math.round(coreLeftCss * dpr);
   const coreWidth = Math.round(coreRect.width * dpr);
-  ctx.fillStyle = 'rgba(4, 7, 10, 0.68)';
+  ctx.fillStyle = 'rgba(4, 7, 10, 0.42)';
   if (coreLeft > 0) ctx.fillRect(0, 0, coreLeft, height);
   const rightStart = coreLeft + coreWidth;
   if (rightStart < width) ctx.fillRect(rightStart, 0, width - rightStart, height);
+  if (glPreviewActive) {
+    // 核心区域必须完全透明：原生 SurfaceView 在 WebView 下层透出画面，
+    // 延展地图画布哪怕画了一个像素都会盖在原生画面上
+    ctx.clearRect(coreLeft, 0, coreWidth, height);
+  }
 }
 
 /** 导出倍速卡：选中态 + 成片时长估算（原时长 ÷ 倍速，下限 6 秒）。 */
@@ -1419,6 +1600,8 @@ async function exportNativeScene(): Promise<void> {
   exporting = true;
   exportCancelled = false;
   pausePlayback();
+  // 导出要自建一份原生地图实例（约百兆级），预览先让路，结束后再恢复
+  disengageGlPreview();
   currentMap?.lock();
   resetExportOverlayUi();
   exportOverlay.hidden = false;
@@ -1585,9 +1768,11 @@ async function exportNativeScene(): Promise<void> {
     currentMap?.unlock();
     if (currentStage) {
       playhead = currentStage.duration;
-      currentStage.renderAt(playhead);
+      if (glPreviewActive && glPreviewReady) pushGlFrame(playhead);
+      else currentStage.renderAt(playhead);
       updateTransport();
     }
+    engageGlPreview();
   }
 }
 

@@ -277,7 +277,8 @@ function tileLoop(loop: AudioBuffer, seconds: number): AudioBuffer {
   const ctx = new OfflineAudioContext(1, 1, SAMPLE_RATE);
   const out = ctx.createBuffer(2, frames, SAMPLE_RATE);
   const fadeIn = Math.min(0.6, seconds * 0.2);
-  const fadeOut = Math.min(MUSIC_FADE_SEC, seconds * 0.3);
+  // 结尾固定淡出 0.5s（视频太短时最多占一半），避免最后一个音被硬切出爆音
+  const fadeOut = Math.min(MUSIC_FADE_SEC, seconds * 0.5);
   for (let c = 0; c < 2; c += 1) {
     const dst = out.getChannelData(c);
     const src = loop.getChannelData(Math.min(c, loop.numberOfChannels - 1));
@@ -299,13 +300,55 @@ function tileLoop(loop: AudioBuffer, seconds: number): AudioBuffer {
   return out;
 }
 
+interface StoredLocalMusic {
+  name: string;
+  size: number;
+  stamp: number;
+  blob: Blob;
+}
+
+/** 读本地音乐设置。文件指纹用 文件名+大小+修改时间，换了文件必须能区分开。 */
+async function readLocalMusic(): Promise<StoredLocalMusic | null> {
+  try {
+    const { getSetting } = await import('../store/db');
+    const stored = await getSetting<{ name: string; blob: Blob; stamp?: number } | null>('music-local-file', null);
+    if (!stored?.blob) return null;
+    const stamp = stored.stamp
+      ?? (stored.blob as Blob & { lastModified?: number }).lastModified
+      ?? 0;
+    return { name: stored.name, size: stored.blob.size, stamp, blob: stored.blob };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 缓存键：内置曲目只看「曲目+时长」；本地音乐还要带上文件指纹，
+ * 否则换了另一首歌（曲目 id 仍是 local）会命中旧缓冲，听起来像没换成功。
+ */
+export async function musicCacheKey(trackId: string, seconds: number): Promise<string> {
+  const base = seconds.toFixed(2);
+  if (trackId !== 'local') return `${trackId}:${base}`;
+  const stored = await readLocalMusic();
+  return stored
+    ? `local:${stored.name}:${stored.size}:${stored.stamp}:${base}`
+    : `local:none:${base}`;
+}
+
+/** 本地文件换掉后，旧缓冲没有价值了，顺手清掉避免占内存。 */
+function pruneLocalBuffers(): void {
+  for (const key of Array.from(bufferCache.keys())) {
+    if (key.startsWith('local:')) bufferCache.delete(key);
+  }
+}
+
 /**
  * 渲染指定曲目的完整 AudioBuffer。同一 (曲目, 时长) 只渲染一次，
  * 预览与导出共享缓存。
  */
 export async function renderMusicBuffer(trackId: string, seconds: number): Promise<AudioBuffer | null> {
   if (trackId === 'none' || seconds <= 0.2) return null;
-  const key = `${trackId}:${seconds.toFixed(2)}`;
+  const key = await musicCacheKey(trackId, seconds);
   const cached = bufferCache.get(key);
   if (cached) return cached;
 
@@ -313,6 +356,7 @@ export async function renderMusicBuffer(trackId: string, seconds: number): Promi
     // 本地音乐：文件存 IndexedDB（Blob），用时解码一次，之后按视频时长平铺
     const decoded = await loadLocalMusicBuffer();
     if (!decoded) return null;
+    pruneLocalBuffers();
     const buffer = tileLoop(decoded, seconds);
     bufferCache.set(key, buffer);
     return buffer;
@@ -335,10 +379,9 @@ let localKey = '';
 /** 解码本地音乐文件（mp3/flac 等），换歌后重新解码。结果缓存在内存里。 */
 async function loadLocalMusicBuffer(): Promise<AudioBuffer | null> {
   try {
-    const { getSetting } = await import('../store/db');
-    const stored = await getSetting<{ name: string; blob: Blob } | null>('music-local-file', null);
-    if (!stored?.blob) return null;
-    const key = `${stored.name}:${stored.blob.size}`;
+    const stored = await readLocalMusic();
+    if (!stored) return null;
+    const key = `${stored.name}:${stored.size}:${stored.stamp}`;
     if (localDecoded && localKey === key) return localDecoded;
     const ctx = new OfflineAudioContext(2, SAMPLE_RATE, SAMPLE_RATE);
     const bytes = await stored.blob.arrayBuffer();

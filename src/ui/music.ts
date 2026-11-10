@@ -69,14 +69,19 @@ export function openMusicSheet(): void {
 }
 
 function rowFor(track: (typeof MUSIC_TRACKS)[number]): HTMLButtonElement {
-  const name = track.id === 'local' && localMusicName ? localMusicName : track.name;
-  const note = track.id === 'local' && localMusicName ? '已选择 · 点击文件可更换' : track.note;
+  const isLocal = track.kind === 'local';
+  const name = isLocal && localMusicName ? localMusicName : track.name;
+  const note = isLocal && localMusicName ? '已选择 · 点击可更换文件' : track.note;
   const row = document.createElement('button');
   row.type = 'button';
   row.className = `song${track.id === currentTrackId ? ' on' : ''}`;
+  // 本地音乐没有内置曲目可试听，右侧按钮直接做成「选择/更换文件」
+  const action = isLocal
+    ? `<button class="audition" type="button" data-pick-local>${localMusicName ? '更换' : '选择'}</button>`
+    : (track.kind === 'none' ? '' : '<button class="audition" type="button" data-audition>试听</button>');
   row.innerHTML = `<span class="song-name">${name}</span>`
     + `<span class="song-note">${note}</span>`
-    + (track.kind === 'none' ? '' : '<button class="audition" type="button" data-audition>试听</button>')
+    + action
     + '<span class="song-check">✓</span>';
   row.dataset.track = track.id;
   return row;
@@ -90,6 +95,11 @@ function buildList(): void {
     const row = rowFor(track);
     row.addEventListener('click', (event) => {
       const target = event.target as HTMLElement;
+      if (target.closest('[data-pick-local]')) {
+        event.stopPropagation();
+        pickLocalMusic();
+        return;
+      }
       if (target.closest('[data-audition]')) {
         event.stopPropagation();
         const btn = target.closest<HTMLButtonElement>('[data-audition]');
@@ -104,8 +114,19 @@ function buildList(): void {
         })();
         return;
       }
-      if (track.id === 'local' && !localMusicName) {
-        pickLocalMusic();
+      if (track.kind === 'local') {
+        // 没选过文件：直接弹选择器；已经选过：若当前不是它则切过去，
+        // 若当前就是本地音乐，再点一次就是「换一首」。
+        if (!localMusicName) {
+          pickLocalMusic();
+          return;
+        }
+        if (currentTrackId === 'local') {
+          pickLocalMusic();
+          return;
+        }
+        void selectMusic('local');
+        closeSheet();
         return;
       }
       void selectMusic(track.id);
@@ -143,7 +164,8 @@ async function importLocalMusic(file: File): Promise<void> {
   }
   const name = file.name.replace(/\.(mp3|flac|m4a|aac|wav)$/i, '') || '本地音乐';
   try {
-    await setSetting('music-local-file', { name: file.name, blob: file });
+    // stamp 显式存下来：缓存键要靠它区分「同名同大小但换过的文件」
+    await setSetting('music-local-file', { name: file.name, blob: file, stamp: file.lastModified || Date.now() });
     await setSetting('music-local-name', name);
     localMusicName = name;
     currentTrackId = 'local';

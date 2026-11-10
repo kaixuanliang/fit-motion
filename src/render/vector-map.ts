@@ -7,7 +7,14 @@ import type { VideoTheme } from './theme';
 
 const VECTOR_ZOOM = 14;
 const SEGMENT_METERS = 100_000;
+/** 核心画面视野：相机窗口约 2 张瓦片宽，路线贴瓦片边时也只超出 ±1 张。 */
 const TILE_BUFFER = 1;
+/**
+ * 延展区走廊：预览容器满宽，左右两侧延展地图比核心宽约 50%，加上路线
+ * 贴瓦片边的余量，按 ±2 张取。超出核心走廊的部分在后台补抓补解码，
+ * 不阻塞「正在缓存地图瓦片」的门（首次缓存的等待时间不变）。
+ */
+const AMBIENT_BUFFER = 2;
 const TILEJSON_URL = 'https://tiles.openfreemap.org/planet';
 const DB_NAME = 'fit-motion-vector-tiles';
 const DB_VERSION = 1;
@@ -168,15 +175,15 @@ function tileCoords(lat: number, lon: number): { x: number; y: number } {
   return { x: Math.floor(world.x / TILE_SIZE), y: Math.floor(world.y / TILE_SIZE) };
 }
 
-function buildSegments(activity: Activity): Segment[] {
+function buildSegments(activity: Activity, buffer: number): Segment[] {
   const count = Math.max(1, Math.ceil(activity.distanceM / SEGMENT_METERS));
   const segments: Segment[] = Array.from({ length: count }, (_, index) => ({ index, keys: [] }));
   const seen = new Set<string>();
   for (const point of activity.points) {
     const segment = segments[Math.min(count - 1, Math.floor(point.distance / SEGMENT_METERS))];
     const tile = tileCoords(point.lat, point.lon);
-    for (let dx = -TILE_BUFFER; dx <= TILE_BUFFER; dx += 1) {
-      for (let dy = -TILE_BUFFER; dy <= TILE_BUFFER; dy += 1) {
+    for (let dx = -buffer; dx <= buffer; dx += 1) {
+      for (let dy = -buffer; dy <= buffer; dy += 1) {
         const key = `${VECTOR_ZOOM}/${tile.x + dx}/${tile.y + dy}`;
         if (seen.has(key)) continue;
         seen.add(key);
@@ -202,6 +209,34 @@ function parseTile(data: ArrayBuffer): ParsedTile | null {
  * 创作页的滚动/触摸会整段卡死 —— 每张瓦片处理完停一拍。
  */
 const yieldToUi = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+/**
+ * 让出节拍器。
+ *
+ * 旧写法是「每张瓦片 yieldToUi()」，但 setTimeout 有 4ms 下限：
+ * 一条长途骑行有近 300 张总览瓦片，光排队就白等 1.2s，而单张光栅化
+ * 也才十几毫秒。改为累计忙够 SLICE_MS 才让出一拍 —— 加载页是静态画面，
+ * 单次卡顿几十毫秒无感，进度条照样在动。
+ *
+ * 多个 worker 必须共用同一道闸门：各自 await 自己的 setTimeout 时，
+ * 先醒的那个继续跑，其余接着排队，主线程照样被饿住。
+ */
+const SLICE_MS = 32;
+let sliceStartedAt = 0;
+let pauseGate: Promise<void> | null = null;
+
+async function yieldIfBusy(): Promise<void> {
+  const now = performance.now();
+  if (!sliceStartedAt) sliceStartedAt = now;
+  if (now - sliceStartedAt < SLICE_MS) return;
+  if (!pauseGate) {
+    pauseGate = yieldToUi().then(() => {
+      pauseGate = null;
+    });
+  }
+  await pauseGate;
+  sliceStartedAt = performance.now();
+}
 
 function rgb(color: number[]): string {
   return `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
@@ -229,6 +264,72 @@ const RASTER_BUDGET_PER_FRAME = 2;
 /** 总览层位图缓存字节预算：必须装得下一条长路线的全部瓦片（见 bitmapFor）。 */
 const OVERVIEW_BITMAP_BUDGET = 192 * 1024 * 1024;
 
+/**
+ * 跨实例共享的 pbf 解析缓存。
+ *
+ * 每次进创作页都会重建图层实例，实例里的 parsed/active 全部作废，pbf 要
+ * 重新解码。结果只取决于瓦片内容（与主题无关），共享后热进页可直接复用。
+ * 上限按一次长途行程的瓦片量（总览 ~300 + 第一视角 ~200）再留余量。
+ */
+const parsedShared = new Map<string, ParsedTile>();
+const PARSED_SHARED_LIMIT = 1600;
+
+function sharedParsedGet(key: string): ParsedTile | undefined {
+  return parsedShared.get(key);
+}
+
+function sharedParsedSet(key: string, parsed: ParsedTile): void {
+  if (parsedShared.has(key)) return;
+  parsedShared.set(key, parsed);
+  if (parsedShared.size > PARSED_SHARED_LIMIT) {
+    const oldest = parsedShared.keys().next();
+    if (!oldest.done) parsedShared.delete(oldest.value);
+  }
+}
+
+/**
+ * 跨实例共享的位图缓存（光栅化结果）。键带主题 id（不同主题颜色不同）
+ * 与 @尺寸，按字节预算淘汰。热进页时预热循环只剩让出，不再重烤。
+ *
+ * 预算必须盖住一次长途行程的完整工作集（实测 120km ≈ 67MB：总览 289 张
+ * @139px ≈ 28MB + 第一视角 64 张 @~380px ≈ 39MB），否则 FIFO 预热顺序
+ * 「先总览后第一视角」会互相挤掉，命中归零。按设备内存自适应：低端机
+ * 缩水到 56MB（总览优先保住，第一视角部分命中）。
+ */
+const bitmapShared = new Map<string, TileBitmap>();
+let bitmapSharedBytes = 0;
+const BITMAP_SHARED_BUDGET = (() => {
+  try {
+    const gb = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
+    if (typeof gb === 'number' && gb > 0 && gb < 4) return 56 * 1024 * 1024;
+  } catch {
+    // 老内核没有 deviceMemory
+  }
+  return 112 * 1024 * 1024;
+})();
+
+function bitmapEntryBytes(entry: TileBitmap): number {
+  return (entry.size + BITMAP_PAD * 2) ** 2 * 4;
+}
+
+function sharedBitmapGet(themeId: string, cacheKey: string): TileBitmap | undefined {
+  return bitmapShared.get(`${themeId}|${cacheKey}`);
+}
+
+function sharedBitmapSet(themeId: string, cacheKey: string, entry: TileBitmap): void {
+  const key = `${themeId}|${cacheKey}`;
+  if (bitmapShared.has(key)) return;
+  bitmapShared.set(key, entry);
+  bitmapSharedBytes += bitmapEntryBytes(entry);
+  while (bitmapSharedBytes > BITMAP_SHARED_BUDGET && bitmapShared.size > 1) {
+    const oldest = bitmapShared.keys().next();
+    if (oldest.done) break;
+    const evicted = bitmapShared.get(oldest.value);
+    bitmapShared.delete(oldest.value);
+    if (evicted) bitmapSharedBytes -= bitmapEntryBytes(evicted);
+  }
+}
+
 export class VectorFollowLayer {
   readonly zoom = VECTOR_ZOOM;
   readonly segments: Segment[];
@@ -239,6 +340,10 @@ export class VectorFollowLayer {
   private readonly ambientBitmaps = new Map<string, TileBitmap>();
   private readonly base: TrackMap;
   private readonly allKeys: string[];
+  /** 缓存门内的核心走廊（±1 张），决定「正在缓存地图瓦片」的等待时间。 */
+  private readonly coreKeys: string[];
+  /** 延展走廊超出核心的部分（±2 张差集），后台补抓补解码。 */
+  private readonly extraKeys: string[];
   private readonly active = new Map<string, ParsedTile>();
   private readonly parsed = new Map<string, ParsedTile>();
   private prefetched = false;
@@ -253,9 +358,17 @@ export class VectorFollowLayer {
     this.activity = activity;
     this.theme = theme;
     this.base = base;
-    this.segments = buildSegments(activity);
-    this.allKeys = [...new Set(this.segments.flatMap((segment) => segment.keys))];
-    this.totalTiles = this.allKeys.length;
+    this.segments = buildSegments(activity, TILE_BUFFER);
+    const coreKeys = [...new Set(this.segments.flatMap((segment) => segment.keys))];
+    // 扩展走廊（±2 张）供满宽预览的两侧延展地图使用；超出核心走廊的部分
+    // 不阻塞缓存门，后台补齐（见 prefetchExtras）。
+    const wide = buildSegments(activity, AMBIENT_BUFFER);
+    const wideKeys = [...new Set(wide.flatMap((segment) => segment.keys))];
+    const coreSet = new Set(coreKeys);
+    this.coreKeys = coreKeys;
+    this.extraKeys = wideKeys.filter((key) => !coreSet.has(key));
+    this.allKeys = [...coreKeys, ...this.extraKeys];
+    this.totalTiles = coreKeys.length;
   }
 
   get failedTiles(): number {
@@ -277,8 +390,8 @@ export class VectorFollowLayer {
     let done = 0;
     let aborted = false;
     const worker = async (): Promise<void> => {
-      while (cursor < this.allKeys.length && !aborted) {
-        const key = this.allKeys[cursor++];
+      while (cursor < this.coreKeys.length && !aborted) {
+        const key = this.coreKeys[cursor++];
         const [z, x, y] = key.split('/').map(Number);
         const blob = await fetchVectorTile(z, x, y);
         if (!blob) {
@@ -288,7 +401,7 @@ export class VectorFollowLayer {
           if (this.failed >= 8) aborted = true;
         }
         done += 1;
-        onProgress?.(done, this.allKeys.length);
+        onProgress?.(done, this.coreKeys.length);
       }
     };
     // 纯网络抓取（下载 + IndexedDB 写入），每步本来就是异步挂起的，
@@ -297,16 +410,44 @@ export class VectorFollowLayer {
     this.prefetched = this.failed === 0;
   }
 
+  /** 后台补齐延展走廊：下载（IDB）→ 解码 → 进 active。不阻塞任何门。 */
+  private async prefetchExtras(): Promise<void> {
+    let cursor = 0;
+    const worker = async (): Promise<void> => {
+      while (cursor < this.extraKeys.length) {
+        const key = this.extraKeys[cursor++];
+        if (this.active.has(key)) continue;
+        const sharedParsed = sharedParsedGet(key);
+        if (sharedParsed) {
+          this.parsed.set(key, sharedParsed);
+          this.active.set(key, sharedParsed);
+          continue;
+        }
+        const [z, x, y] = key.split('/').map(Number);
+        const data = await fetchVectorTile(z, x, y);
+        const parsed = data ? parseTile(data) : null;
+        if (parsed) {
+          sharedParsedSet(key, parsed);
+          this.parsed.set(key, parsed);
+          this.active.set(key, parsed);
+        }
+        await yieldIfBusy();
+      }
+    };
+    await Promise.all(Array.from({ length: 4 }, () => worker()));
+  }
+
   async primeAll(onProgress?: (done: number, total: number) => void): Promise<void> {
-    if (this.primed.length === this.segments.length && this.active.size >= this.allKeys.length * 0.95) return;
-    this.priming = this.primeKeys(this.allKeys, onProgress);
+    if (this.primed.length === this.segments.length && this.active.size >= this.coreKeys.length * 0.95) return;
+    this.priming = this.primeKeys(this.coreKeys, onProgress);
     try {
       await this.priming;
     } finally {
       this.priming = null;
     }
-    if (this.active.size < this.allKeys.length) {
-      throw new Error(`矢量缓存缺少 ${this.allKeys.length - this.active.size} 张瓦片`);
+    const missing = this.coreKeys.filter((key) => !this.active.has(key)).length;
+    if (missing > 0) {
+      throw new Error(`矢量缓存缺少 ${missing} 张瓦片`);
     }
     this.primed = this.segments.map((segment) => segment.index);
     this.lastRequested = this.segments.length - 1;
@@ -329,8 +470,11 @@ export class VectorFollowLayer {
       if (parsed) this.bitmapFor(parsed, tilePixels, key);
       done += 1;
       onProgress?.(done, keys.length);
-      await yieldToUi();
+      await yieldIfBusy();
     }
+    // 预热独占主线程的阶段结束了，才让延展走廊在后台补抓补解码，
+    // 避免和预热抢 CPU 拖慢「正在生成地图画面」。
+    void this.prefetchExtras();
   }
 
   async prime(progress: number, onProgress?: (done: number, total: number) => void): Promise<void> {
@@ -358,28 +502,37 @@ export class VectorFollowLayer {
   }
 
   private async primeKeys(keys: string[], onProgress?: (done: number, total: number) => void): Promise<void> {
-    this.active.clear();
+    // 注意：绝不 clear()。旧实现在换段 prime 时清空整个 active 再异步重建，
+    // 重建的窗口期里视野内的瓦片全部缺失 —— 表现为播放中地图整块消失。
+    // parsed 本来就保留全部解码结果，active 只增不减（内存与 parsed 持平，
+    // 清它省不出任何东西）。
     let done = 0;
     let cursor = 0;
     const worker = async (): Promise<void> => {
       while (cursor < keys.length) {
         const key = keys[cursor++];
-        let parsed = this.parsed.get(key);
-        if (!parsed) {
-          const [z, x, y] = key.split('/').map(Number);
-          const data = await fetchVectorTile(z, x, y);
-          if (data) {
-            parsed = parseTile(data) ?? undefined;
-            if (parsed) this.parsed.set(key, parsed);
+        if (!this.active.has(key)) {
+          let parsed = this.parsed.get(key);
+          if (!parsed) parsed = sharedParsedGet(key);
+          if (!parsed) {
+            const [z, x, y] = key.split('/').map(Number);
+            const data = await fetchVectorTile(z, x, y);
+            if (data) {
+              parsed = parseTile(data) ?? undefined;
+              if (parsed) {
+                sharedParsedSet(key, parsed);
+                this.parsed.set(key, parsed);
+              }
+            }
           }
+          if (parsed) this.active.set(key, parsed);
         }
-        if (parsed) this.active.set(key, parsed);
         done += 1;
         onProgress?.(done, keys.length);
         // parseTile 是同步解码。长距离骑行走线走廊有上百张瓦片，一路不让出
         // 会把主线程冻住数秒（创作页 85% 进度卡死就是这么来的）。8 个 worker
         // 会在同一轮事件循环里背靠背各解一张，所以必须每张必让出一拍。
-        await yieldToUi();
+        await yieldIfBusy();
       }
     };
     await Promise.all(Array.from({ length: 8 }, () => worker()));
@@ -417,21 +570,44 @@ export class VectorFollowLayer {
       const fastY1 = Math.floor(((bottom + this.base.originY) * worldScale) / TILE_SIZE);
       let painted = 0;
       let rasterized = 0;
+      const dbg = (window as unknown as { __fmDrawDbg?: unknown }).__fmDrawDbg;
       for (let tileX = fastX0; tileX <= fastX1; tileX += 1) {
         for (let tileY = fastY0; tileY <= fastY1; tileY += 1) {
           const key = `${VECTOR_ZOOM}/${tileX}/${tileY}`;
           const parsed = this.active.get(key);
-          if (!parsed) continue;
-          const wantSize = Math.max(32, Math.round(tilePixels));
-          const cached = this.bitmaps.get(key);
-          if (!cached || cached.size !== wantSize) {
-            if (rasterized >= RASTER_BUDGET_PER_FRAME) continue;
-            rasterized += 1;
+          if (!parsed) {
+            if (dbg) (dbg as { missActive: string[] }).missActive.push(key);
+            continue;
           }
-          const bitmap = this.bitmapFor(parsed, tilePixels, key);
+          let cached = this.bitmaps.get(key);
+          if (!cached || cached.size !== Math.max(32, Math.round(tilePixels))) {
+            if (rasterized >= RASTER_BUDGET_PER_FRAME) {
+              // 预算用完也不留白：复用任何现成位图，或现烤一张约 128px 的
+              // 低清兜底（稀疏模式，成本约为全量的 1/9），先把色块顶上去；
+              // 之后帧有预算时走 bitmapFor 自动升级成全尺寸位图。
+              cached = this.hurryBitmapFor(parsed, key) ?? undefined;
+              if (!cached) {
+                if (dbg) (dbg as { missBudget: string[] }).missBudget.push(key);
+                continue;
+              }
+            } else {
+              rasterized += 1;
+              cached = this.bitmapFor(parsed, tilePixels, key);
+            }
+          }
+          const bitmap = cached;
           const screenX = stageWidth / 2 + (tileX * tileBaseSize - this.base.originX - camera.x) * scale;
           const screenY = stageHeight / 2 + (tileY * tileBaseSize - this.base.originY - camera.y) * scale;
-          ctx.drawImage(bitmap.canvas, Math.round(screenX) - bitmap.pad, Math.round(screenY) - bitmap.pad);
+          // 位图边长可能与屏幕瓦片尺寸不同（兜底位图更小）：按比例拉伸绘制，
+          // pad 边距同步缩放，保证瓦片内容对齐屏幕网格。
+          const k = tilePixels / bitmap.size;
+          ctx.drawImage(
+            bitmap.canvas,
+            Math.round(screenX - BITMAP_PAD * k),
+            Math.round(screenY - BITMAP_PAD * k),
+            Math.ceil(bitmap.canvas.width * k),
+            Math.ceil(bitmap.canvas.height * k),
+          );
           painted += 1;
         }
       }
@@ -609,12 +785,45 @@ export class VectorFollowLayer {
     const size = Math.max(32, Math.round(sizePx));
     const cached = this.bitmaps.get(key);
     if (cached && cached.size === size) return cached;
+    // 跨实例共享：重建图层后位图不再重烤（预热只剩让出，毫秒级）
+    const shared = sharedBitmapGet(this.theme.id, `${key}@${size}`);
+    if (shared) {
+      if (this.bitmaps.size >= BITMAP_CACHE_LIMIT) {
+        const oldest = this.bitmaps.keys().next();
+        if (!oldest.done) this.bitmaps.delete(oldest.value);
+      }
+      this.bitmaps.set(key, shared);
+      return shared;
+    }
     const entry = this.rasterizeTile(parsed, size);
     if (this.bitmaps.size >= BITMAP_CACHE_LIMIT) {
       const oldest = this.bitmaps.keys().next();
       if (!oldest.done) this.bitmaps.delete(oldest.value);
     }
     this.bitmaps.set(key, entry);
+    sharedBitmapSet(this.theme.id, `${key}@${size}`, entry);
+    return entry;
+  }
+
+  /**
+   * 低清兜底位图：光栅化预算用完时的「不空白」保险。约 1/3 边长（像素量
+   * 1/9，且小于 256 时走稀疏绘制）现烤一张顶上，视觉上是短暂的柔和色块
+   * 而不是整块底色空白；key 与全尺寸位图共用，之后帧有预算时自动升级。
+   */
+  private hurryBitmapFor(parsed: ParsedTile, key: string): TileBitmap | null {
+    const cached = this.bitmaps.get(key);
+    // 已有任何尺寸的位图（哪怕不是当前屏幕尺寸）都比空白强，直接复用，
+    // 绘制端会按 tilePixels/bitmap.size 拉伸对齐。
+    if (cached) return cached;
+    const shared = sharedBitmapGet(this.theme.id, `${key}@128`);
+    if (shared) return shared;
+    const entry = this.rasterizeTile(parsed, 128);
+    if (this.bitmaps.size >= BITMAP_CACHE_LIMIT) {
+      const oldest = this.bitmaps.keys().next();
+      if (!oldest.done) this.bitmaps.delete(oldest.value);
+    }
+    this.bitmaps.set(key, entry);
+    sharedBitmapSet(this.theme.id, `${key}@128`, entry);
     return entry;
   }
 
@@ -711,8 +920,9 @@ export class VectorFollowLayer {
 
   /**
    * 延展区绘制（预览视频核心两侧的低清氛围地图）：与核心同一相机视角的
-   * 左右延伸。位图缓存独立于核心（ambient@size，尺寸不同不能共用，否则
-   * 两个比例会互相踢缓存导致每帧都重烤）。每帧限量现烤，烤不完的下拍补。
+   * 左右延伸。位图优先从核心位图降采样派生（纯 drawImage，零解码成本，
+   * 也不会和核心互踢缓存），没有核心位图时才现烤；延展是压暗的氛围图，
+   * 低清没有观感代价，但绝不能留底色空白（播放快于光栅化时整侧发灰）。
    */
   drawAmbient(ctx: CanvasRenderingContext2D, camera: MapCamera, stageWidth: number, stageHeight: number): boolean {
     if (!this.active.size) return false;
@@ -734,21 +944,22 @@ export class VectorFollowLayer {
 
     const tilePixels = tileBaseSize * scale;
     let painted = 0;
-    let rasterized = 0;
     for (let tileX = x0; tileX <= x1; tileX += 1) {
       for (let tileY = y0; tileY <= y1; tileY += 1) {
         const key = `${VECTOR_ZOOM}/${tileX}/${tileY}`;
         const parsed = this.active.get(key);
-        if (!parsed) continue;
+        if (!parsed) {
+          const dbgA = (window as unknown as { __fmDrawDbg?: unknown }).__fmDrawDbg;
+          if (dbgA) (dbgA as { missActiveAmbient: string[] }).missActiveAmbient.push(key);
+          continue;
+        }
         const screenX = stageWidth / 2 + (tileX * tileBaseSize - this.base.originX - camera.x) * scale;
         const screenY = stageHeight / 2 + (tileY * tileBaseSize - this.base.originY - camera.y) * scale;
         const size = Math.max(32, Math.round(tilePixels));
         const cacheKey = `${key}@a${size}`;
         let bitmap = this.ambientBitmaps.get(cacheKey);
         if (!bitmap) {
-          if (rasterized >= RASTER_BUDGET_PER_FRAME) continue;
-          rasterized += 1;
-          bitmap = this.rasterizeTile(parsed, size);
+          bitmap = this.deriveAmbientBitmap(key, size);
           if (this.ambientBitmaps.size >= 96) {
             const oldest = this.ambientBitmaps.keys().next();
             if (!oldest.done) this.ambientBitmaps.delete(oldest.value);
@@ -760,6 +971,32 @@ export class VectorFollowLayer {
       }
     }
     return painted > 0;
+  }
+
+  /**
+   * 生成一张延展位图：优先把核心位图（任意尺寸）降采样到目标尺寸 —— 两侧
+   * 是压暗低清氛围，缩放的柔化正好；核心位图还没有时才现场光栅化一张小图。
+   */
+  private deriveAmbientBitmap(key: string, size: number): TileBitmap {
+    const core = this.bitmaps.get(key);
+    const canvas = document.createElement('canvas');
+    canvas.width = size + BITMAP_PAD * 2;
+    canvas.height = size + BITMAP_PAD * 2;
+    const target = canvas.getContext('2d');
+    if (target && core) {
+      target.imageSmoothingEnabled = true;
+      target.imageSmoothingQuality = 'high';
+      target.drawImage(core.canvas, 0, 0, core.canvas.width, core.canvas.height, 0, 0, canvas.width, canvas.height);
+      return { canvas, size, pad: BITMAP_PAD };
+    }
+    if (target) {
+      const parsed = this.active.get(key);
+      if (parsed) {
+        target.translate(BITMAP_PAD, BITMAP_PAD);
+        this.paintTile(target, parsed, size, size + BITMAP_PAD * 2, size + BITMAP_PAD * 2);
+      }
+    }
+    return { canvas, size, pad: BITMAP_PAD };
   }
 
   /** Draws one tile in its own pixel space; the caller supplies the origin. */
@@ -1180,6 +1417,8 @@ export class OverviewVectorLayer {
   private bitmapBytes = 0;
   /** 位图光栅化锁定比例（warmBitmaps 时确定，draw 按当前缩放拉伸）。 */
   private rasterScale: number | null = null;
+  /** 本次预热实际使用的位图边长（像素），供性能诊断。 */
+  lastRasterSize = 0;
   private failed = 0;
   private loaded = 0;
   private wanted = 0;
@@ -1266,10 +1505,18 @@ export class OverviewVectorLayer {
           onProgress?.(this.loaded, this.wanted);
           continue;
         }
+        const sharedParsed = sharedParsedGet(key);
+        if (sharedParsed) {
+          this.tiles.set(key, sharedParsed);
+          this.loaded += 1;
+          onProgress?.(this.loaded, this.wanted);
+          continue;
+        }
         const [z, x, y] = key.split('/').map(Number);
         const data = await fetchVectorTile(z, x, y);
         const parsed = data ? parseTile(data) : null;
         if (parsed) {
+          sharedParsedSet(key, parsed);
           this.tiles.set(key, parsed);
         } else {
           this.failed += 1;
@@ -1279,7 +1526,7 @@ export class OverviewVectorLayer {
         onProgress?.(this.loaded, this.wanted);
         // parseTile 是同步解码，10 个 worker 会背靠背各解一张 —— 必须每张
         // 让出一拍，否则长路线会把主线程冻住数秒
-        await yieldToUi();
+        await yieldIfBusy();
       }
     };
     await Promise.all(Array.from({ length: 10 }, () => worker()));
@@ -1296,6 +1543,7 @@ export class OverviewVectorLayer {
     // 每帧都要重烤全部视野瓦片（冻页数秒、动画卡成跳帧）。位图一律按这个
     // 比例烤，绘制时按当前缩放拉伸（见 draw）。
     this.rasterScale = scale;
+    this.lastRasterSize = Math.max(128, Math.min(768, Math.round(this.tileBase * scale)));
     const keys = Array.from(this.tiles.keys());
     let done = 0;
     for (const key of keys) {
@@ -1303,7 +1551,7 @@ export class OverviewVectorLayer {
       if (parsed) this.bitmapFor(parsed, this.tileBase * scale, key);
       done += 1;
       onProgress?.(done, keys.length);
-      await yieldToUi();
+      await yieldIfBusy();
     }
   }
 
@@ -1312,6 +1560,12 @@ export class OverviewVectorLayer {
     const cacheKey = `${key}@${size}`;
     const cached = this.bitmaps.get(cacheKey);
     if (cached) return cached;
+    // 跨实例共享：重建图层后位图不再重烤（预热只剩让出，毫秒级）
+    const shared = sharedBitmapGet(this.theme.id, cacheKey);
+    if (shared) {
+      this.bitmaps.set(cacheKey, shared);
+      return shared;
+    }
     const canvas = document.createElement('canvas');
     canvas.width = size + BITMAP_PAD * 2;
     canvas.height = size + BITMAP_PAD * 2;
@@ -1328,6 +1582,7 @@ export class OverviewVectorLayer {
     // 卡死）。改为按字节预算淘汰：装满为止，超出预算才挤最旧的。
     this.bitmapBytes += (size + BITMAP_PAD * 2) ** 2 * 4;
     this.bitmaps.set(cacheKey, entry);
+    sharedBitmapSet(this.theme.id, cacheKey, entry);
     while (this.bitmapBytes > OVERVIEW_BITMAP_BUDGET && this.bitmaps.size > 1) {
       const oldest = this.bitmaps.keys().next();
       if (oldest.done) break;
@@ -1352,7 +1607,10 @@ export class OverviewVectorLayer {
     // screen constant instead of ballooning when a tile is rasterised large.
     const widthScale = sizePx / 256;
     const map = this.theme.map;
-    const sparse = this.zoom <= 11;
+    // 位图被压到 200px 出头时，一栋楼、一条支路在屏幕上不到 1px ——
+    // 画它们纯属浪费（每张瓦片要为此遍历上千个 feature）。这种尺寸直接
+    // 按稀疏模式画：只留水面、干道和高速，视觉上没有区别，解码量少一大半。
+    const sparse = this.zoom <= 11 || sizePx < 256;
     const layers = parsed.tile.layers as Record<string, any>;
     const inView = (x: number, y: number): boolean => x > -24 && x < viewW + 24 && y > -24 && y < viewH + 24;
 
@@ -1382,8 +1640,7 @@ export class OverviewVectorLayer {
       target.globalAlpha = 1;
     };
 
-    const strokeLine = (feature: any, color: string, width: number, alpha = 1): void => {
-      const geometry = feature.loadGeometry() as TilePoint[][];
+    const strokeGeometry = (geometry: TilePoint[][], color: string, width: number, alpha = 1): void => {
       for (const line of geometry) {
         if (line.length < 2) continue;
         target.beginPath();
@@ -1410,6 +1667,8 @@ export class OverviewVectorLayer {
         target.globalAlpha = 1;
       }
     };
+    const strokeLine = (feature: any, color: string, width: number, alpha = 1): void =>
+      strokeGeometry(feature.loadGeometry() as TilePoint[][], color, width, alpha);
 
     const parkTint = `rgb(${map.park[0]}, ${map.park[1]}, ${map.park[2]})`;
     const builtTint = `rgb(${map.building[0]}, ${map.building[1]}, ${map.building[2]})`;
@@ -1418,7 +1677,11 @@ export class OverviewVectorLayer {
     target.beginPath();
     target.rect(-1, -1, viewW + 2, viewH + 2);
     target.clip();
+    // 小位图（总览预热常见 140px 上下）上，地块/土地利用只是一层几乎看不出的
+    // 色差，却要为此解码成千上万个多边形 —— 直接跳过，只留水面和公园。
+    const tinyRaster = sizePx < 256;
     for (const name of ['landcover', 'landuse', 'park', 'water']) {
+      if (tinyRaster && (name === 'landcover' || name === 'landuse')) continue;
       const layer = layers[name];
       if (!layer) continue;
       for (let index = 0; index < layer.length; index += 1) {
@@ -1479,6 +1742,10 @@ export class OverviewVectorLayer {
     const roads = layers.transportation;
     if (roads) {
       const edge = `rgb(${map.roadEdge[0]}, ${map.roadEdge[1]}, ${map.roadEdge[2]})`;
+      // 描边（pass 0）和路面（pass 1）必须分两轮画，否则后画的路面会盖掉
+      // 前一条路的描边。但两轮用的是同一份几何，第一次解码后留下来复用：
+      // loadGeometry() 每次调用都要重新解 pbf，是这层最贵的操作。
+      const geometry: Array<TilePoint[][] | undefined> = [];
       for (let pass = 0; pass < 2; pass += 1) {
         for (let index = 0; index < roads.length; index += 1) {
           const feature = roads.feature(index);
@@ -1488,13 +1755,18 @@ export class OverviewVectorLayer {
             if (pass === 1) strokeLine(feature, `rgb(${map.transit[0]}, ${map.transit[1]}, ${map.transit[2]})`, 1.2 * widthScale);
             continue;
           }
+          if (pass === 0 && sparse && !arterial(kind)) continue;
+          if (pass === 1 && sparse && lane(kind)) continue;
+          let rings = geometry[index];
+          if (!rings) {
+            rings = feature.loadGeometry() as TilePoint[][];
+            geometry[index] = rings;
+          }
           if (pass === 0) {
-            if (sparse && !arterial(kind)) continue;
-            strokeLine(feature, edge, (widthOf(kind) + (sparse ? 1.4 : 2.4)) * widthScale, sparse ? 0.5 : 1);
+            strokeGeometry(rings, edge, (widthOf(kind) + (sparse ? 1.4 : 2.4)) * widthScale, sparse ? 0.5 : 1);
           } else {
-            if (sparse && lane(kind)) continue;
             const width = sparse ? widthOf(kind) * 0.8 : widthOf(kind);
-            strokeLine(feature, colorOf(kind), width * widthScale, sparse ? roadAlpha(kind) : 1);
+            strokeGeometry(rings, colorOf(kind), width * widthScale, sparse ? roadAlpha(kind) : 1);
           }
         }
       }
@@ -1626,7 +1898,7 @@ export class OverviewVectorLayer {
       }
       done += 1;
       onProgress?.(done, keys.length);
-      await yieldToUi();
+      await yieldIfBusy();
     }
     this.labelCache = cache;
   }
