@@ -35,6 +35,35 @@ type TilePoint = { x: number; y: number };
 let dbPromise: Promise<IDBDatabase | null> | null = null;
 let templatePromise: Promise<string | null> | null = null;
 const blobMemory = new Map<string, ArrayBuffer>();
+let blobMemoryBytes = 0;
+
+/**
+ * 原始 PBF 瓦片的内存驻留上限：低端机（deviceMemory < 4GB）24MB，其余 48MB。
+ * 淘汰只是出内存不落盘——IDB 里都有，批量预读（readBlobsBatch）回来很快。
+ * 不设上限的话长路线（几百张 × 数十 KB）会在低端机上白白常驻几十 MB。
+ */
+const BLOB_MEMORY_BUDGET = (() => {
+  try {
+    const gb = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
+    if (typeof gb === 'number' && gb > 0 && gb < 4) return 24 * 1024 * 1024;
+  } catch {
+    // 老内核没有 deviceMemory
+  }
+  return 48 * 1024 * 1024;
+})();
+
+function blobMemorySet(key: string, data: ArrayBuffer): void {
+  if (blobMemory.has(key)) return;
+  blobMemory.set(key, data);
+  blobMemoryBytes += data.byteLength;
+  while (blobMemoryBytes > BLOB_MEMORY_BUDGET && blobMemory.size > 1) {
+    const oldest = blobMemory.keys().next();
+    if (oldest.done) break;
+    const evicted = blobMemory.get(oldest.value);
+    blobMemory.delete(oldest.value);
+    if (evicted) blobMemoryBytes -= evicted.byteLength;
+  }
+}
 
 function openDb(): Promise<IDBDatabase | null> {
   if (dbPromise) return dbPromise;
@@ -74,7 +103,7 @@ async function readBlob(key: string): Promise<ArrayBuffer | null> {
       request.onsuccess = () => {
         const value = request.result;
         if (value instanceof ArrayBuffer) {
-          blobMemory.set(key, value);
+          blobMemorySet(key, value);
           resolve(value);
         } else {
           resolve(null);
@@ -87,8 +116,45 @@ async function readBlob(key: string): Promise<ArrayBuffer | null> {
   });
 }
 
+/** 批量预读：一个 readonly 事务填充 blobMemory，冷路径省掉逐条事务开销。返回命中数。 */
+async function readBlobsBatch(keys: string[]): Promise<number> {
+  const missing = keys.filter((key) => !blobMemory.has(key));
+  if (missing.length === 0) return keys.length;
+  const db = await openDb();
+  if (!db) return 0;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(STORE, 'readonly');
+      const store = tx.objectStore(STORE);
+      let hits = 0;
+      let done = 0;
+      const total = missing.length;
+      const finish = (): void => {
+        done += 1;
+        if (done >= total) resolve(hits);
+      };
+      for (const key of missing) {
+        const request = store.get(cacheKey(key));
+        request.onsuccess = () => {
+          const value = request.result;
+          if (value instanceof ArrayBuffer) {
+            blobMemorySet(key, value);
+            hits += 1;
+          }
+          finish();
+        };
+        request.onerror = finish;
+      }
+      tx.onerror = () => resolve(hits);
+      tx.onabort = () => resolve(hits);
+    } catch {
+      resolve(0);
+    }
+  });
+}
+
 async function writeBlob(key: string, data: ArrayBuffer): Promise<void> {
-  blobMemory.set(key, data);
+  blobMemorySet(key, data);
   const db = await openDb();
   if (!db) return;
   await new Promise<void>((resolve) => {
@@ -386,6 +452,8 @@ export class VectorFollowLayer {
   async prefetch(onProgress?: (done: number, total: number) => void): Promise<void> {
     this.failed = 0;
     this.prefetched = false;
+    // 冷路径批量预读 IDB，已缓存瓦片跳过逐条事务
+    await readBlobsBatch(this.coreKeys);
     let cursor = 0;
     let done = 0;
     let aborted = false;
@@ -1495,6 +1563,8 @@ export class OverviewVectorLayer {
     this.wanted = keys.length;
     this.loaded = 0;
     this.failed = 0;
+    // 冷路径批量预读 IDB，已缓存瓦片跳过逐条事务
+    await readBlobsBatch(keys);
     let cursor = 0;
     let abort = false;
     const worker = async (): Promise<void> => {
@@ -2013,6 +2083,7 @@ export class OverviewVectorLayer {
 
 export async function clearVectorTileCache(): Promise<void> {
   blobMemory.clear();
+  blobMemoryBytes = 0;
   templatePromise = null;
   try {
     localStorage.removeItem('fit-motion-vector-template');

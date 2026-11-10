@@ -352,7 +352,7 @@ public class MainActivity extends Activity {
         webView.setBackgroundColor(transparent ? Color.TRANSPARENT : Color.rgb(5, 9, 10));
     }
 
-    private final NativePreviewView.Callback previewCallback = new NativePreviewView.Callback() {
+    private final NativePreviewRenderer.Callback previewCallback = new NativePreviewRenderer.Callback() {
         @Override
         public void onReady(final int totalFrames) {
             runOnUiThread(new Runnable() {

@@ -11,6 +11,7 @@ if (!fs.existsSync(exe)) {
 }
 
 fs.mkdirSync(dist, { recursive: true });
+fs.rmSync(path.join(dist, 'assets'), { recursive: true, force: true });
 for (const name of ['app.js', 'app.css', 'index.html', 'FitMotion.apk']) {
   const file = path.join(dist, name);
   if (fs.existsSync(file)) fs.unlinkSync(file);
@@ -32,17 +33,20 @@ if (result.status !== 0) process.exit(result.status ?? 1);
 
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const css = fs.readFileSync(path.join(dist, 'app.css'), 'utf8');
-const js = fs.readFileSync(path.join(dist, 'app.js'), 'utf8').replace(/<\/script/gi, '<\\/script');
+// JS 外置为 defer 的经典脚本：HTML+CSS 内联先上屏，1.8MB 的解析不再阻塞首帧。
+// 经典 script 在 file://（APK 的 android_asset）下没有 CORS 限制，ES module 才有。
 const inlined = html
   .replace('</head>', () => `<style>${css}</style>\n  </head>`)
   .replace(
     /\s*<script type="module" src="\/src\/main\.ts"><\/script>\s*/,
-    () => `\n    <script>${js}</script>\n`,
+    () => `\n    <script src="./assets/app.js" defer></script>\n`,
   );
 
-if (inlined === html || !inlined.includes('<script>')) {
-  throw new Error('Could not inline the bundle into index.html');
+if (inlined === html || !inlined.includes('assets/app.js')) {
+  throw new Error('Could not reference the bundle from index.html');
 }
 
+fs.mkdirSync(path.join(dist, 'assets'), { recursive: true });
+fs.renameSync(path.join(dist, 'app.js'), path.join(dist, 'assets', 'app.js'));
 fs.writeFileSync(path.join(dist, 'index.html'), inlined);
-console.log(`Built dist/index.html (${(Buffer.byteLength(inlined) / 1024).toFixed(0)} KB)`);
+console.log(`Built dist/index.html (${(Buffer.byteLength(inlined) / 1024).toFixed(0)} KB) + dist/assets/app.js`);

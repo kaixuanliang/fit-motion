@@ -32,7 +32,11 @@ fs.mkdirSync(path.join(build, 'gen'), { recursive: true });
 fs.mkdirSync(path.join(build, 'classes'), { recursive: true });
 fs.mkdirSync(path.join(build, 'dex'), { recursive: true });
 fs.mkdirSync(path.join(android, 'assets', 'www'), { recursive: true });
+fs.mkdirSync(path.join(android, 'assets', 'www', 'assets'), { recursive: true });
 fs.copyFileSync(path.join(dist, 'index.html'), path.join(android, 'assets', 'www', 'index.html'));
+// JS 外置为 defer 脚本（冷启动首帧更快），必须一起打进 assets
+fs.copyFileSync(path.join(dist, 'assets', 'app.js'),
+  path.join(android, 'assets', 'www', 'assets', 'app.js'));
 
 // 版本号单源化：package.json 的 version 是唯一来源。
 // versionCode 用日期流水（如 20261109），每次构建当天递增可见性一致。
@@ -69,6 +73,7 @@ const javaSources = [
   path.join(android, 'java', 'com', 'fitmotion', 'app', 'ShareProvider.java'),
   path.join(android, 'java', 'com', 'fitmotion', 'app', 'NativePreview.java'),
   path.join(android, 'java', 'com', 'fitmotion', 'app', 'NativePreviewView.java'),
+  path.join(android, 'java', 'com', 'fitmotion', 'app', 'NativePreviewRenderer.java'),
   path.join(android, 'java', 'com', 'fitmotion', 'app', 'NativeVectorMap.java'),
   path.join(android, 'java', 'com', 'fitmotion', 'app', 'Mvt.java'),
   path.join(android, 'java', 'com', 'fitmotion', 'app', 'ExportService.java'),

@@ -1,7 +1,8 @@
 import type { Activity } from '../fit/activity';
 import { project, TILE_SIZE } from '../geo';
 import type { VideoTheme } from './theme';
-import { loadTileImage } from './tile-cache';
+import { loadTileImage, readCachedBatch, type TileImage } from './tile-cache';
+import { readMapSnapshot, writeMapSnapshot } from './snapshot-cache';
 
 export interface MapRoutePoint {
   x: number;
@@ -23,7 +24,7 @@ export interface MapCamera {
  * 路线包围盒/中心点 —— 相同就逐像素相同，直接整幅复制即可。
  * 只保留最近一份（约 10~15MB）。
  */
-let mapSnapshot: { key: string; canvas: HTMLCanvasElement } | null = null;
+let mapSnapshot: { key: string; canvas: CanvasImageSource } | null = null;
 
 /**
  * A self-contained map stage. It paints an art-directed fallback immediately,
@@ -98,11 +99,12 @@ export class TrackMap {
     this.usingTiles = false;
 
     // 成品快照命中：整幅复制后立即就绪，跳过解码/调色/合成全流程。
+    // 先查内存（同进程再进页），再查 IDB（App 二次打开后冷页面首次进页）。
     const snapshotKey = this.snapshotKey();
-    if (mapSnapshot && mapSnapshot.key === snapshotKey) {
+    const applySnapshot = (source: CanvasImageSource): void => {
       const ctx = this.canvas.getContext('2d')!;
       ctx.clearRect(0, 0, this.width, this.height);
-      ctx.drawImage(mapSnapshot.canvas, 0, 0);
+      ctx.drawImage(source, 0, 0);
       // 与 darkenTiles 收尾后的状态保持一致（rawCanvas 指向成品画布）
       this.rawCanvas = this.canvas;
       this.darkPaletteApplied = true;
@@ -113,6 +115,16 @@ export class TrackMap {
       this.tileProgress = 1;
       onProgress?.(1);
       this.update?.();
+    };
+    if (mapSnapshot && mapSnapshot.key === snapshotKey) {
+      applySnapshot(mapSnapshot.canvas);
+      return;
+    }
+    const stored = await readMapSnapshot(snapshotKey);
+    if (stored && !this.locked) {
+      // 直接拿 ImageBitmap 当内存快照，省掉一次全幅复制
+      mapSnapshot = { key: snapshotKey, canvas: stored };
+      applySnapshot(stored);
       return;
     }
 
@@ -123,6 +135,16 @@ export class TrackMap {
     }
     this.tilesTotal = tiles.length;
     if (tiles.length === 0) return;
+
+    // 冷路径批量预读 IDB（一个事务全部 get），逐张 worker 直接命中内存
+    const mark = (step: string): void => {
+      try {
+        performance.mark(`fm:raster:${step}`, { detail: { tiles: this.tilesTotal } });
+      } catch { /* 老内核没有 mark */ }
+    };
+    mark('batch-start');
+    await readCachedBatch(tiles.map(([x, y]) => [this.zoom, x, y] as [number, number, number]));
+    mark('batch-done');
 
     const rawCtx = this.rawCanvas.getContext('2d')!;
     rawCtx.clearRect(0, 0, this.width, this.height);
@@ -150,10 +172,12 @@ export class TrackMap {
       }
     };
     await Promise.all(Array.from({ length: concurrency }, () => worker()));
+    mark('draw-done');
 
     if (this.tilesFailed > 0 || this.tilesDone < this.tilesTotal) return;
     if (this.locked) return;
     await this.darkenTiles();
+    mark('darken-done');
     this.usingTiles = true;
     this.tilesComplete = true;
     // 保存成品快照，下次同参进页直接复制
@@ -161,6 +185,9 @@ export class TrackMap {
       const snapshot = createCanvas(this.width, this.height);
       snapshot.getContext('2d')!.drawImage(this.canvas, 0, 0);
       mapSnapshot = { key: this.snapshotKey(), canvas: snapshot };
+      // 持久化一份到 IDB：App 二次打开后的首次进页可直接恢复，
+      // 跳过「读瓦片 → 逐像素调色 → 连通域清标注 → 阴影合成」整条 4s+ 管线
+      void writeMapSnapshot(mapSnapshot.key, snapshot);
     } catch {
       // 快照失败不影响本次结果
     }
@@ -209,7 +236,7 @@ export class TrackMap {
     return { x0: minTileX, x1: maxTileX, y0: minTileY, y1: maxTileY };
   }
 
-  private paintRailTile(image: HTMLImageElement, tileX: number, tileY: number): void {
+  private paintRailTile(image: TileImage, tileX: number, tileY: number): void {
     const tile = document.createElement('canvas');
     tile.width = TILE_SIZE;
     tile.height = TILE_SIZE;
@@ -240,7 +267,7 @@ export class TrackMap {
     this.railCtx.drawImage(tile, tileX * TILE_SIZE - this.originX, tileY * TILE_SIZE - this.originY);
   }
 
-  private paintWaterTile(image: HTMLImageElement, tileX: number, tileY: number): void {
+  private paintWaterTile(image: TileImage, tileX: number, tileY: number): void {
     const tile = document.createElement('canvas');
     tile.width = TILE_SIZE;
     tile.height = TILE_SIZE;
@@ -485,11 +512,11 @@ function boundsOf(points: MapRoutePoint[]): { minX: number; maxX: number; minY: 
   );
 }
 
-function loadTile(zoom: number, x: number, y: number): Promise<HTMLImageElement | null> {
+function loadTile(zoom: number, x: number, y: number): Promise<TileImage | null> {
   return loadTileImage(zoom, x, y);
 }
 
-export function makeMapTile(image: HTMLImageElement, theme: VideoTheme): HTMLCanvasElement {
+export function makeMapTile(image: TileImage, theme: VideoTheme): HTMLCanvasElement {
   const tile = document.createElement('canvas');
   tile.width = TILE_SIZE;
   tile.height = TILE_SIZE;

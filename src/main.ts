@@ -11,6 +11,7 @@ import { SAMPLE_FIT_BASE64, SAMPLE_NAME } from './data/sample';
 import { TrackMap } from './render/map';
 import { OverviewVectorLayer, VectorFollowLayer, clearVectorTileCache } from './render/vector-map';
 import { clearBaseTileCache } from './render/tile-cache';
+import { clearMapSnapshots } from './render/snapshot-cache';
 import { MotionStage } from './render/stage';
 import { THEMES, isThemeId, type ThemeId } from './render/theme';
 import { bindTabbar, currentPane, showPane } from './ui/router';
@@ -29,6 +30,7 @@ import type { ActivityMeta } from './store/types';
 import { downloadTrack, probeAll } from './backup/sync';
 import { trimCache } from './store/cache';
 import { initKeyboard } from './ui/keyboard';
+import { getSetting, setSetting } from './store/db';
 
 declare global {
   interface Window {
@@ -143,6 +145,63 @@ let glPreviewActive = false;
 let glPreviewReady = false;
 let glPreviewTotalFrames = 0;
 
+/**
+ * 预览渲染方式（设置页可切）：
+ *  - auto：原生 OpenGL，SurfaceView 载体；个别机型挖洞黑屏时 App 会自动退到
+ *    TextureView；
+ *  - texture：强制用 TextureView 载体（兼容模式，给自动检测也失效的机型用）；
+ *  - web：完全走网页 Canvas 渲染（老路径，最稳但帧率受瓦片加载影响）。
+ */
+type PreviewRenderer = 'auto' | 'texture' | 'web';
+const PREVIEW_RENDERER_LABEL: Record<PreviewRenderer, string> = {
+  auto: '原生 OpenGL',
+  texture: '兼容模式 · TextureView',
+  web: '网页 Canvas',
+};
+const PREVIEW_RENDERER_NEXT: Record<PreviewRenderer, PreviewRenderer> = {
+  auto: 'texture',
+  texture: 'web',
+  web: 'auto',
+};
+let previewRenderer: PreviewRenderer = 'auto';
+
+function loadPreviewRenderer(): void {
+  void getSetting<PreviewRenderer>('preview.renderer', 'auto').then((value) => {
+    if (value === 'texture' || value === 'web' || value === 'auto') {
+      previewRenderer = value;
+    }
+    syncPreviewRendererUi();
+  });
+}
+
+function syncPreviewRendererUi(): void {
+  const label = document.getElementById('set-renderer');
+  if (label) label.textContent = PREVIEW_RENDERER_LABEL[previewRenderer];
+  const button = document.getElementById('set-renderer-btn');
+  if (button) {
+    button.textContent = previewRenderer === 'auto' ? '切换到兼容渲染' : '切换到下一个';
+  }
+}
+
+/** 切换渲染方式：写设置 → 重建当前创作页预览（三种方式互斥）。 */
+function cyclePreviewRenderer(): void {
+  previewRenderer = PREVIEW_RENDERER_NEXT[previewRenderer];
+  void setSetting('preview.renderer', previewRenderer);
+  syncPreviewRendererUi();
+  if (!currentStage || posterMode) return;
+  hideStageLoading();
+  glPreviewReady = false;
+  disengageGlPreview();
+  if (previewRenderer === 'web') {
+    // 回到网页渲染：把画布补画出来（原生接管期间 canvas 是隐藏的）
+    currentStage.renderAt(playhead);
+    drawAmbient();
+    setStudioBusy(false);
+    return;
+  }
+  engageGlPreview();
+}
+
 const glBridge = (): Window['FitMotionAndroid'] | null => {
   const bridge = window.FitMotionAndroid;
   return bridge && typeof bridge.nativePreviewStart === 'function' ? bridge : null;
@@ -185,11 +244,14 @@ function canPlayback(): boolean {
 }
 
 function engageGlPreview(): void {
+  if (previewRenderer === 'web') return;
   const bridge = glBridge();
   if (!bridge || !currentStage || !currentActivity || posterMode || exporting) return;
   const date = currentActivity.timeAvailable ? formatDateParts(currentActivity.startTime) : null;
   const payload = nativeScenePayload(activeTheme(), date, currentStage.duration);
   payload.fps = 30;
+  // auto 走 SurfaceView（失败由原生侧自动退 TextureView）；texture 直接指定兼容载体
+  (payload as { renderer?: string }).renderer = previewRenderer === 'texture' ? 'texture' : 'surface';
   glPreviewActive = true;
   glPreviewReady = false;
   document.documentElement.classList.add('gl-preview');
@@ -289,6 +351,8 @@ async function boot(): Promise<void> {
     await refreshPanels();
   });
   byId<HTMLButtonElement>('set-open-trash').addEventListener('click', () => void trash?.open());
+  loadPreviewRenderer();
+  document.getElementById('set-renderer-btn')?.addEventListener('click', () => cyclePreviewRenderer());
   importer = initImport(async () => {
     await records?.reload();
     await refreshPanels();
@@ -886,7 +950,7 @@ async function clearMapCacheAndReload(): Promise<void> {
   if (exporting) return;
   if (!(await confirmClearCache())) return;
   try {
-    await Promise.all([clearBaseTileCache(), clearVectorTileCache()]);
+    await Promise.all([clearBaseTileCache(), clearVectorTileCache(), clearMapSnapshots()]);
     showToast('地图缓存已清除，正在重新缓存…');
     if (currentActivity) {
       mountStudio(currentActivity, activeTheme(), 0, false);

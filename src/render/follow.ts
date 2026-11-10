@@ -3,7 +3,7 @@ import { project, TILE_SIZE } from '../geo';
 import type { MapCamera, TrackMap } from './map';
 import { makeMapTile } from './map';
 import type { VideoTheme } from './theme';
-import { fetchTileBlob, loadTileImage } from './tile-cache';
+import { fetchTileBlob, loadTileImage, readCachedBatch } from './tile-cache';
 
 const SEGMENT_METERS = 100_000;
 const TILE_BUFFER = 1;
@@ -114,6 +114,8 @@ export class FollowTileLayer {
   }
 
   async prefetch(onProgress?: (done: number, total: number) => void): Promise<void> {
+    // 冷路径批量预读 IDB，已缓存的瓦片在 fetchTileBlob 里直接命中内存
+    await readCachedBatch(this.allKeys.map((key) => parseKey(key) as [number, number, number]));
     let cursor = 0;
     let done = 0;
     const workers = 12;
