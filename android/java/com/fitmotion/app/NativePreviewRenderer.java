@@ -192,8 +192,9 @@ final class NativePreviewRenderer {
             public void run() {
                 try {
                     JSONObject payload = new JSONObject(payloadJson);
+                    boolean globalView = payload.optBoolean("globalView", false);
                     NativeVectorMap f = new NativeVectorMap(payload, activity.getCacheDir(),
-                            NativeVectorMap.FOLLOW_ZOOM, false);
+                            NativeVectorMap.FOLLOW_ZOOM, false, !globalView);
                     NativeVectorMap o = new NativeVectorMap(payload, activity.getCacheDir(),
                             NativeRenderJob.overviewZoom(payload), true);
                     follow = f;

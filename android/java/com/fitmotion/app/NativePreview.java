@@ -40,8 +40,9 @@ final class NativePreview {
         float[] ratios = new float[]{0.01f, 0.34f, 0.62f, 0.99f};
 
         long started = System.currentTimeMillis();
+        boolean globalView = payload.optBoolean("globalView", false);
         NativeVectorMap follow = new NativeVectorMap(payload, context.getCacheDir(),
-                NativeVectorMap.FOLLOW_ZOOM, false);
+                NativeVectorMap.FOLLOW_ZOOM, false, !globalView);
         NativeVectorMap overview = new NativeVectorMap(payload, context.getCacheDir(),
                 NativeRenderJob.overviewZoom(payload), true);
         long tileMs = System.currentTimeMillis() - started;

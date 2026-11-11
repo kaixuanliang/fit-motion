@@ -120,6 +120,12 @@ final class NativeRouteScene implements NativeScene {
 
     private final NativeVectorMap follow;
     private final NativeVectorMap overview;
+    /**
+     * 全局视角模式：相机全程钉在整条路线的取景上（封面/成绩卡构图），
+     * 走线为渐进描绘。>300km 的记录第一视角瓦片走廊成本不可行，改走本模式；
+     * 此时 z14 走廊瓦片既不下载也不预光栅，只依赖总览层。
+     */
+    private final boolean globalView;
 
     // Kilometre chips along the route: one dot per km plus a pre-rendered
     // number texture, so a frame costs a handful of extra quads.
@@ -213,6 +219,7 @@ final class NativeRouteScene implements NativeScene {
                      int width, int height, int fps) throws Exception {
         this.follow = follow;
         this.overview = overview;
+        this.globalView = payload.optBoolean("globalView", false);
         this.width = width;
         this.height = height;
         this.fps = Math.max(1, fps);
@@ -670,7 +677,12 @@ final class NativeRouteScene implements NativeScene {
         float camY;
         float scale;
 
-        if (frameIndex < coverEnd) {
+        if (globalView) {
+            // 全局视角：全程使用封面/成绩卡取景，进度只改变路线描绘与标记。
+            scale = fitScale;
+            camX = fitCamX;
+            camY = fitCamY;
+        } else if (frameIndex < coverEnd) {
             // Static poster: the exact same framing as the closing shot, so the
             // first and the last frame of the video are identical.
             scale = fitScale;
@@ -858,6 +870,9 @@ final class NativeRouteScene implements NativeScene {
      * starts so the loop never stalls on a first-use tile.
      */
     List<long[]> followPrerasterTargets() {
+        // 全局视角不画 follow 层（drawTiles 里已跳过），走廊预光栅整段省掉——
+        // 这正是 >300km 改走全局视角后导出大幅提速的来源。
+        if (globalView) return new ArrayList<long[]>();
         Set<Long> seen = new HashSet<Long>();
         List<long[]> out = new ArrayList<long[]>();
         int n = xs.length;
@@ -922,7 +937,8 @@ final class NativeRouteScene implements NativeScene {
         if (overview != null && overviewWeight > 0.001f && overviewTilePx > 0) {
             drawTileLayer(overview, camX, camY, scale, overviewTilePx, overviewRatio, 1f);
         }
-        if (scale > 0.10f) {
+        // 全局视角只用总览层：z14 走廊瓦片没有下载/预光栅，画了也是洞。
+        if (scale > 0.10f && !globalView) {
             float alpha = smoothstep(0.10f, 0.42f, scale);
             drawTileLayer(follow, camX, camY, scale, followTilePx, 1f, alpha);
         }
@@ -2662,8 +2678,9 @@ final class NativeRenderJob {
         progressPhase = "prefetch";
         progressDone.set(0);
         progressTotal.set(1);
+        boolean globalView = payload.optBoolean("globalView", false);
         NativeVectorMap follow = new NativeVectorMap(payload, context.getCacheDir(),
-                NativeVectorMap.FOLLOW_ZOOM, false);
+                NativeVectorMap.FOLLOW_ZOOM, false, !globalView);
         NativeVectorMap overview = new NativeVectorMap(payload, context.getCacheDir(),
                 overviewZoom(payload), true);
         long tileLoadMs = SystemClock.elapsedRealtime() - tilesStart;

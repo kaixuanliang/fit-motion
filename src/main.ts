@@ -98,7 +98,11 @@ let currentActivityId: string | null = null;
 let currentMap: TrackMap | null = null;
 let currentFollow: VectorFollowLayer | null = null;
 let currentOverview: OverviewVectorLayer | null = null;
-let posterMode = false;
+/** 成片视角：第一视角（跟随镜头）或全局视角（整条路线渐进描绘）。 */
+type ViewMode = 'follow' | 'global';
+let viewMode: ViewMode = 'follow';
+/** 距离超过 300km 后锁定全局视角（第一视角瓦片走廊成本不可行）。 */
+let viewLocked = false;
 let cacheReady = false;
 
 /**
@@ -107,12 +111,12 @@ let cacheReady = false;
  * labelCandidates 全是热缓存，重进等于零成本；不缓存的话 closeStudio 的
  * clear() 会把它们全丢掉，重进要重跑抓取→解码→预热→标签整条管线，
  * 表现为「同一条数据第二次进入还是卡一下、又看一遍缓存进度」。
- * 换记录 / 换主题 / 海报模式切换 / 清除缓存 / 重新导入都会使缓存失效。
+ * 换记录 / 换主题 / 视角切换 / 清除缓存 / 重新导入都会使缓存失效。
  */
 interface StudioSession {
   activityId: string;
   themeId: string;
-  posterMode: boolean;
+  viewMode: ViewMode;
   /** 上一轮 prepareStudio 完整跑完（缓存门全过）才允许走复用捷径 */
   ready: boolean;
   map: TrackMap;
@@ -208,7 +212,7 @@ function cyclePreviewRenderer(): void {
   previewRenderer = PREVIEW_RENDERER_NEXT[previewRenderer];
   void setSetting('preview.renderer', previewRenderer);
   syncPreviewRendererUi();
-  if (!currentStage || posterMode) return;
+  if (!currentStage) return;
   hideStageLoading();
   glPreviewReady = false;
   disengageGlPreview();
@@ -266,7 +270,7 @@ function canPlayback(): boolean {
 function engageGlPreview(): void {
   if (previewRenderer === 'web') return;
   const bridge = glBridge();
-  if (!bridge || !currentStage || !currentActivity || posterMode || exporting) return;
+  if (!bridge || !currentStage || !currentActivity || exporting) return;
   const date = currentActivity.timeAvailable ? formatDateParts(currentActivity.startTime) : null;
   const payload = nativeScenePayload(activeTheme(), date, currentStage.duration);
   payload.fps = 30;
@@ -534,6 +538,12 @@ function bindEvents(): void {
   byId<HTMLButtonElement>('export-track-fit').addEventListener('click', () => void exportTrack('fit'));
   byId<HTMLButtonElement>('export-track-gpx').addEventListener('click', () => void exportTrack('gpx'));
   byId<HTMLButtonElement>('export-track-tcx').addEventListener('click', () => void exportTrack('tcx'));
+  // 保存路线图 PNG（原 >300km 海报模式保留为副选项，任意视角可用）
+  byId<HTMLButtonElement>('export-poster-btn').addEventListener('click', () => {
+    void exportPoster();
+  });
+  // 视角切换：>300km 锁定全局（按钮隐藏），其余两种视角自由切换
+  byId<HTMLButtonElement>('view-toggle').addEventListener('click', toggleViewMode);
   byId<HTMLButtonElement>('clear-cache').addEventListener('click', () => void clearMapCacheAndReload());
   stageLoading.addEventListener('click', (event) => {
     const target = event.target as HTMLElement | null;
@@ -609,7 +619,7 @@ function bindEvents(): void {
       }
       syncExportSpeedUi();
       // 点击倍速 = 以该倍速从头预览播放，导出也是同一个倍速（单一选中态）。
-      if (!exporting && currentStage && !posterMode && canPlayback()) {
+      if (!exporting && currentStage && canPlayback()) {
         pausePlayback();
         playhead = 0;
         startPlayback();
@@ -724,7 +734,7 @@ function mountStudio(activity: Activity, theme: ReturnType<typeof activeTheme>, 
   const sessionHit = !!(studioSession && sessionId !== null
     && studioSession.activityId === sessionId
     && studioSession.themeId === theme.id
-    && studioSession.posterMode === posterMode);
+    && studioSession.viewMode === viewMode);
   if (sessionHit && studioSession) {
     currentMap = studioSession.map;
     currentFollow = studioSession.follow;
@@ -733,19 +743,21 @@ function mountStudio(activity: Activity, theme: ReturnType<typeof activeTheme>, 
     currentMap = new TrackMap(activity, theme, () => {
       if (currentStage) currentStage.renderAt(playhead);
     });
-    currentFollow = posterMode ? null : new VectorFollowLayer(activity, theme, currentMap);
+    // 全局视角不需要第一视角瓦片走廊（那是 >300km 不可行的成本大头），
+    // 只有第一视角模式才建跟随层并抓 z15/16 瓦片。
+    currentFollow = viewMode === 'follow' ? new VectorFollowLayer(activity, theme, currentMap) : null;
     currentOverview = new OverviewVectorLayer(theme, currentMap);
     studioSession = {
       activityId: sessionId ?? '',
       themeId: theme.id,
-      posterMode,
+      viewMode,
       ready: false,
       map: currentMap,
       follow: currentFollow,
       overview: currentOverview,
     };
   }
-  currentStage = new MotionStage(stageCanvas, activity, currentMap, theme, currentFollow ?? undefined);
+  currentStage = new MotionStage(stageCanvas, activity, currentMap, theme, currentFollow ?? undefined, viewMode === 'global');
   currentStage.setOverview(currentOverview);
   cacheMark(sessionHit ? 'session-hit' : 'session-miss');
   (window as unknown as { __fmSession?: StudioSession | null }).__fmSession = studioSession;
@@ -757,27 +769,44 @@ function mountStudio(activity: Activity, theme: ReturnType<typeof activeTheme>, 
   drawAmbient();
   updateTransport();
   syncExportSpeedUi();
-  // 音乐缓冲在地图缓存的网络空档里悄悄渲染好，点播放立刻有声
-  if (!posterMode) void musicPlayer.prepare(currentMusicId(), currentStage.duration);
+  // 音乐缓冲在地图缓存的网络空档里悄悄渲染好，点播放立刻有声（全局视角
+  // 也是视频，同样配乐）
+  void musicPlayer.prepare(currentMusicId(), currentStage.duration);
   // 原生预览跟着每次挂载重建（换记录/换主题 payload 都变了）
   engageGlPreview();
   void prepareStudio(activity, theme, token, at, resume, sessionHit);
 }
 
 function applyStudioModeUi(): void {
-  studio.classList.toggle('poster-mode', posterMode);
   const device = byId<HTMLElement>('stage-device');
   const exportButton = byId<HTMLButtonElement>('export-btn');
   const help = byId<HTMLElement>('export-help');
-  if (posterMode) {
-    device.textContent = '路线图 · 1080×1920 PNG';
-    exportButton.innerHTML = '<svg><use href="#i-download"/></svg> 保存 1080×1920 路线图';
-    help.innerHTML = '1080 × 1920 · PNG<br />超过 300 公里仅生成一张完整路线图';
+  const toggle = byId<HTMLButtonElement>('view-toggle');
+  toggle.hidden = viewLocked;
+  toggle.classList.toggle('on', viewMode === 'global');
+  toggle.title = viewMode === 'global'
+    ? '当前：全局视角 · 点击切换第一视角'
+    : '当前：第一视角 · 点击切换全局视角';
+  toggle.setAttribute('aria-label', toggle.title);
+  if (viewMode === 'global') {
+    device.textContent = '全局视角 · 1080P MP4';
+    exportButton.innerHTML = '<svg><use href="#i-download"/></svg> 导出 1080P MP4';
+    help.innerHTML = '1080 × 1920 · 30FPS · MP4 · 全局视角回放完整路线'
+      + (viewLocked ? '（超过 300 公里仅支持全局视角）' : '');
   } else {
     device.textContent = `${activeTheme().label} · 1080P MP4`;
     exportButton.innerHTML = '<svg><use href="#i-download"/></svg> 导出 1080P MP4';
     help.innerHTML = '1080 × 1920 · 30FPS · MP4 · 导出时请保持此页面在前台';
   }
+}
+
+/** 切换视角：重建创作页（缓存会话按视角区分），播放头与播放状态尽量保留。 */
+function toggleViewMode(): void {
+  if (viewLocked || exporting) return;
+  viewMode = viewMode === 'global' ? 'follow' : 'global';
+  showToast(viewMode === 'global' ? '已切换到全局视角。' : '已切换到第一视角。');
+  if (currentActivity) rebuildStudioTheme();
+  else applyStudioModeUi();
 }
 
 function setStudioBusy(busy: boolean): void {
@@ -858,20 +887,21 @@ async function prepareStudio(
     });
     cacheMark(sessionReady ? 'reuse-hit' : 'reuse-miss');
     if (!sessionReady) {
-      showCacheProgress(posterMode ? '正在缓存路线图底图' : '正在缓存地图瓦片', 0);
+      showCacheProgress('正在缓存地图瓦片', 0);
       // 三个抓取任务相互独立（栅格底图 / 矢量总览 / 第一视角瓦片），全部并行。
       // 旧的串行写法把每段的耗时加在一起，并行后总耗时 ≈ 最慢的一段。
+      // 全局视角不抓第一视角瓦片：它只用总览层（这也是 >300km 可行的原因）。
       const ratios = { raster: 0, overview: 0, follow: 0 };
       const reportFetch = (label: string): void => {
-        const combined = posterMode
-          ? ratios.overview * 0.6 + ratios.raster * 0.4
-          : ratios.follow * 0.5 + ratios.overview * 0.3 + ratios.raster * 0.2;
+        const combined = viewMode === 'follow'
+          ? ratios.follow * 0.5 + ratios.overview * 0.3 + ratios.raster * 0.2
+          : ratios.overview * 0.6 + ratios.raster * 0.4;
         showCacheProgress(label, combined * 0.85);
       };
       const rasterTask = map.loadTiles((progress) => {
         if (token !== studioToken) return;
         ratios.raster = progress;
-        reportFetch(posterMode ? '正在缓存路线图底图' : '正在缓存地图瓦片');
+        reportFetch('正在缓存地图瓦片');
       }).then(() => cacheMark('raster-done'));
       // The vector overview is what the cover/result frames actually paint.
       const overviewTask = (overview
@@ -882,7 +912,7 @@ async function prepareStudio(
         })
         : Promise.resolve()).then(() => cacheMark('overview-fetched'));
       // 第一视角瓦片是纯网络抓取（解码在 primeAll 里），不必等前两个任务。
-      const followFetchTask = (!posterMode && follow
+      const followFetchTask = (viewMode === 'follow' && follow
         ? follow.prefetch((done, total) => {
           if (token !== studioToken) return;
           ratios.follow = total ? done / total : 1;
@@ -894,7 +924,7 @@ async function prepareStudio(
       if (token !== studioToken) return;
       if (!map.usingTiles && !overview?.ready) throw new Error('总览地图缓存不完整');
 
-      if (!posterMode && follow) {
+      if (viewMode === 'follow' && follow) {
         showCacheProgress('正在解码第一视角地图', 0.85);
         await follow.primeAll((done, total) => {
           if (token !== studioToken) return;
@@ -907,8 +937,8 @@ async function prepareStudio(
       // 逐张预热瓦片位图（每张让出主线程）。不预热的话，缓存完成后的第一帧要
       // 现烤十几张瓦片（页面冻住一两秒、点播放没反应）；末帧整帧还会被
       // posterCache 截走，截到缺块的画面就再也补不回来了。
-      const warmBase = posterMode ? 0.85 : 0.93;
-      const warmSpan = posterMode ? 0.15 : 0.07;
+      const warmBase = viewMode === 'follow' ? 0.93 : 0.85;
+      const warmSpan = viewMode === 'follow' ? 0.07 : 0.15;
       if (overview) {
         showCacheProgress('正在生成地图画面', warmBase);
         let overviewTiles = 0;
@@ -928,7 +958,7 @@ async function prepareStudio(
         });
         cacheMark('labels-built', { tiles: labelTiles });
       }
-      if (!posterMode && follow) {
+      if (viewMode === 'follow' && follow) {
         let followTiles = 0;
         await follow.warmBitmaps(stage.followCameraScale, (done, total) => {
           followTiles = total;
@@ -945,7 +975,7 @@ async function prepareStudio(
     setStudioBusy(false);
     // 首帧（含总览标签碰撞、海报缓存等一次性成本）必须在加载层还没揭掉时
     // 画完，否则用户看到的是「缓存 100% 后页面冻一下才开始播」。
-    playhead = posterMode ? 0 : at;
+    playhead = at;
     stage.renderAt(playhead);
     cacheMark('first-frame');
     drawAmbient();
@@ -958,7 +988,7 @@ async function prepareStudio(
     if (follow?.failedTiles) {
       showToast(`地图缓存完成，但有 ${follow.failedTiles} 张高清瓦片下载失败，将使用总览底图补齐。`);
     }
-    if (!posterMode && !isStill) {
+    if (!isStill) {
       const wantsPlayback = resume || at < 0.05;
       if (wantsPlayback) {
         window.setTimeout(() => {
@@ -1106,7 +1136,9 @@ function openStudio(activity: Activity, id: string | null = null): void {
   pausePlayback();
   currentActivity = activity;
   currentActivityId = id;
-  posterMode = activity.distanceM > MAX_VIDEO_METERS;
+  // >300km 锁定全局视角：第一视角成片的瓦片走廊成本随里程暴涨，不可行
+  viewLocked = activity.distanceM > MAX_VIDEO_METERS;
+  viewMode = viewLocked ? 'global' : 'follow';
   setCacheReady(false);
   playhead = 0;
   showPane('create');
@@ -1126,7 +1158,7 @@ function closeStudio(): void {
   pausePlayback();
   musicPlayer.stop();
   showPane('records');
-  studio.classList.remove('poster-mode', 'is-busy', 'fs');
+  studio.classList.remove('is-busy', 'fs');
   disengageGlPreview();
   // 注意：不再 clear() 图层实例。实例由 studioSession 持有，同一条记录
   // 二次进入直接复用热缓存；换记录/换主题时实例被整体替换，GC 回收。
@@ -1314,7 +1346,7 @@ function setMetric(valueId: string, unitId: string, value: string, unit: string)
 
 /** 进入全屏播放：舞台铺满屏幕，自动从当前进度续播。 */
 function enterFullScreen(): void {
-  if (!currentStage || posterMode || !canPlayback()) return;
+  if (!currentStage || !canPlayback()) return;
   fsActive = true;
   studio.classList.add('fs');
   const title = document.getElementById('fs-title');
@@ -1335,7 +1367,7 @@ function exitFullScreen(): void {
 }
 
 function togglePlay(): void {
-  if (!currentStage || posterMode || !canPlayback()) return;
+  if (!currentStage || !canPlayback()) return;
   if (playing) {
     pausePlayback();
   } else {
@@ -1348,7 +1380,7 @@ function togglePlay(): void {
 }
 
 function startPlayback(): void {
-  if (!currentStage || playing || posterMode || !canPlayback()) return;
+  if (!currentStage || playing || !canPlayback()) return;
   if (playhead >= currentStage.duration - 0.03) playhead = 0;
   playing = true;
   basePlayhead = playhead;
@@ -1447,7 +1479,7 @@ function renderCurrent(time: number): void {
  * 始终与核心同一帧的相机对齐。全屏与海报模式不需要（CSS 直接隐藏）。
  */
 function drawAmbient(): void {
-  if (fsActive || posterMode || !currentStage || !currentFollow) return;
+  if (fsActive || !currentStage || !currentFollow) return;
   const ctx = ambientCanvas.getContext('2d');
   if (!ctx) return;
   const frameRect = stageFrame.getBoundingClientRect();
@@ -1797,6 +1829,8 @@ function nativeScenePayload(
     duration: activity.durationAvailable ? formatDuration(activity.durationSec) : '—',
     theme: theme.id,
     themeRoute: theme.route,
+    // 成片视角：原生侧据此钉住全景相机并跳过 z14 走廊预光栅
+    globalView: viewMode === 'global',
     speedSeries: buildSpeedSeries(activity),
     heartSeries: buildHeartSeries(activity),
     moments: nativeMoments(activity),
@@ -2011,11 +2045,8 @@ async function exportNativeScene(): Promise<void> {
 }
 
 async function exportCurrent(): Promise<void> {
-  if (posterMode) {
-    await exportPoster();
-  } else {
-    await exportVideo();
-  }
+  // 全局视角 / 第一视角都出 MP4 视频；路线图 PNG 走「保存路线图」副按钮。
+  await exportVideo();
 }
 
 async function exportPoster(): Promise<void> {

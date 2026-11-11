@@ -1990,10 +1990,10 @@ html.gl-preview #stage-canvas {
   display: none;
 }
 
-#studio.poster-mode .transport,
-#studio.poster-mode .export-speed-card {
-  opacity: 0.4;
-  pointer-events: none;
+/* 视角切换按钮：全局视角选中态用主题色点亮 */
+#view-toggle.on {
+  color: var(--accent);
+  border-color: var(--accent-line, var(--accent));
 }
 
 /* ── 导出倍速卡（导出按钮上方） ─────────────────────────────── */

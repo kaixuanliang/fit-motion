@@ -145,6 +145,15 @@ final class NativeVectorMap {
     private long rasterMs;
 
     NativeVectorMap(JSONObject payload, File cacheDir, int zoom, boolean wholeRoute) throws Exception {
+        this(payload, cacheDir, zoom, wholeRoute, true);
+    }
+
+    /**
+     * @param prefetchTiles false 时只建实例不下载瓦片（全局视角模式的 follow
+     *                      层：投影换算仍需要这个实例，但 z14 走廊一张都不抓）。
+     */
+    NativeVectorMap(JSONObject payload, File cacheDir, int zoom, boolean wholeRoute,
+                    boolean prefetchTiles) throws Exception {
         this.zoom = zoom;
         this.tileCacheDir = new File(cacheDir, "native-tiles");
         String theme = payload.optString("theme", "tech");
@@ -242,7 +251,7 @@ final class NativeVectorMap {
         JSONArray points = payload.optJSONArray("points");
         orderedCoords = wholeRoute ? boundsCoords(points) : corridorCoords(points);
         pruneLegacyRasterCache();
-        prefetch(orderedCoords);
+        if (prefetchTiles) prefetch(orderedCoords);
     }
 
     /**

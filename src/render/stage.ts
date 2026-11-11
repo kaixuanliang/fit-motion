@@ -127,17 +127,24 @@ export class MotionStage {
   private lastFrame: StageFrame;
   private follow: VectorFollowLayer | null = null;
   private overview: OverviewVectorLayer | null = null;
+  /**
+   * 全局视角模式：相机全程钉在整条路线的取景上（与封面/成绩卡同一构图），
+   * 走线改为「渐进描绘」——路线从起点一路画到头部标记。>300km 的记录
+   * 第一视角成片不再可行（瓦片走廊成本随里程暴涨），改走全局视角视频。
+   */
+  private readonly globalView: boolean;
   private drawerBlurCanvas: HTMLCanvasElement | null = null;
   private drawerGlassCanvas: HTMLCanvasElement | null = null;
   /** 片尾静止段的整帧快照：末段每帧只需 blit，不再重画地图/轨迹/成绩卡。 */
   private posterCache: HTMLCanvasElement | null = null;
 
-  constructor(canvas: HTMLCanvasElement, activity: Activity, map: TrackMap, theme: VideoTheme, follow?: VectorFollowLayer) {
+  constructor(canvas: HTMLCanvasElement, activity: Activity, map: TrackMap, theme: VideoTheme, follow?: VectorFollowLayer, globalView = false) {
     this.canvas = canvas;
     this.activity = activity;
     this.map = map;
     this.c = theme;
     this.follow = follow ?? null;
+    this.globalView = globalView;
     this.canvas.width = WIDTH;
     this.canvas.height = HEIGHT;
     this.ctx = canvas.getContext('2d', { alpha: false })!;
@@ -309,6 +316,7 @@ export class MotionStage {
    * 必须与核心同层，否则两侧内容和中央对不上。
    */
   overviewPhaseAt(time: number): boolean {
+    if (this.globalView) return true;
     const t = clamp(time, 0, this.totalDuration);
     if (t < COVER_SECONDS) return true;
     return t - COVER_SECONDS > this.runEnd + 0.3;
@@ -390,7 +398,7 @@ export class MotionStage {
     // 本帧光栅化时间预算：绘制中的即时升级与镜头前方预热共用，
     // 保证每帧额外渲染成本有硬上限（慢设备自动少烤，不冻帧）
     const rasterDeadline = { until: performance.now() + 12 };
-    if (!resultVisible && this.follow) {
+    if (!resultVisible && !this.globalView && this.follow) {
       const vectorDrawn = this.follow.draw(ctx, camera, WIDTH, HEIGHT, rasterDeadline);
       if (!vectorDrawn) this.map.draw(ctx, camera, WIDTH, HEIGHT);
       this.follow.ensureForProgress(timeline.progress);
@@ -406,8 +414,8 @@ export class MotionStage {
     this.drawAtmosphere(ctx, resultReveal);
     this.drawRoute(ctx, camera, timeline.progress, resultVisible);
     this.drawMarkers(ctx, camera, timeline.progress, t, resultVisible);
-    if (!resultVisible) this.follow?.drawLabels(ctx, camera, WIDTH, HEIGHT);
-    if (resultVisible) this.overview?.drawLabels(ctx, camera, WIDTH, HEIGHT);
+    if (resultVisible || this.globalView) this.overview?.drawLabels(ctx, camera, WIDTH, HEIGHT);
+    else this.follow?.drawLabels(ctx, camera, WIDTH, HEIGHT);
 
     if (resultVisible) {
       this.drawTopPlace(ctx, current, 1);
@@ -547,6 +555,15 @@ export class MotionStage {
   }
 
   private cameraAt(progress: number, resultReveal: number, current: RoutePoint): MapCamera {
+    if (this.globalView) {
+      // 全局视角：全程使用封面/成绩卡取景。progress 与 resultReveal 只影响
+      // 路线描绘与卡片浮现，不再驱动相机，因此不需要调用 current。
+      void progress;
+      void resultReveal;
+      void current;
+      const resultY = this.fitCenter.y + (HEIGHT / 2 - RESULT_ANCHOR_Y) / this.resultScale;
+      return { x: this.fitCenter.x, y: resultY, scale: this.resultScale };
+    }
     const currentPoint = this.mapPointAtDistance(progress * this.activity.distanceM);
     const aheadPoint = this.mapPointAtDistance(Math.min(1, progress + 0.006) * this.activity.distanceM);
     const runCenter = {
@@ -1231,22 +1248,31 @@ export class MotionStage {
     ctx.restore();
   }
 
-  private drawRoute(ctx: CanvasRenderingContext2D, camera: MapCamera, progress: number, result: boolean): void {    // 封面/成绩卡要画整条轨迹：30k+ GPS 点每帧投影 + 4 次全路径描边在手机上
-    // 是秒级开销（开头冻结、结尾成绩卡段时间冻住的主源）。按固定步长抽稀到
-    // ~1500 点并缓存，13px 描边宽度下视觉无差。巡航段本来只画 720 点局部。
-    const route = result ? this.overviewRoute() : this.map.route;
+  private drawRoute(ctx: CanvasRenderingContext2D, camera: MapCamera, progress: number, result: boolean): void {    // 封面/成绩卡/全局视角要画整条轨迹：30k+ GPS 点每帧投影 + 4 次全路径
+    // 描边在手机上是秒级开销（开头冻结、结尾成绩卡段时间冻住的主源）。按固定
+    // 步长抽稀到 ~1500 点并缓存，13px 描边宽度下视觉无差。第一视角巡航段
+    // 本来只画 720 点局部。
+    const global = this.globalView && !result;
+    const route = result || global ? this.overviewRoute() : this.map.route;
     if (route.length < 2) return;
     const target = clamp(progress, 0, 1) * this.activity.distanceM;
     let index = findIndex(this.activity.points, target);
-    index = Math.min(index, route.length - 1);
+    index = Math.min(index, this.map.route.length - 1);
+    // 成绩卡/封面永远画整条；全局视角把逐点下标映射到抽稀轨迹上。
+    // （旧写法把逐点下标直接 clamp 到抽稀数组长度，恰好总是命中末尾，
+    // 行为碰巧正确但掩盖了下标体系混用；这里显式区分。）
+    if (result) index = route.length - 1;
+    else if (global) index = this.overviewIndexOf(index);
 
     // During the follow shot only a local trail is visible. Mapping all 30k+
     // GPS points every frame was the main cause of the low capture frame rate.
     const trailPoints = 720;
-    const start = result ? 0 : Math.max(0, index - trailPoints);
+    const start = result || global ? 0 : Math.max(0, index - trailPoints);
     const end = result
       ? route.length - 1
-      : Math.min(route.length - 1, index + Math.max(40, Math.floor(route.length * 0.012)));
+      : global
+        ? index
+        : Math.min(route.length - 1, index + Math.max(40, Math.floor(route.length * 0.012)));
     const screen = route.slice(start, end + 1).map((point) => this.map.screenPoint(point, camera, WIDTH, HEIGHT));
     const localIndex = index - start;
 
@@ -1258,7 +1284,7 @@ export class MotionStage {
     // 已走过段持久保留：世界坐标投影画淡线。旧逻辑只回看 720 个原始点，
     // 镜头一移动身后的轨迹就从画面上整段消失（贪吃蛇）；改成抽稀全轨迹后
     // 走过的地方一直在，路线回折或镜头回扫时能看到。1200 点的投影开销可控。
-    if (!result) {
+    if (!result && !global) {
       this.drawWalkedTrail(ctx, camera, target);
     }
 
@@ -1269,7 +1295,7 @@ export class MotionStage {
     }
 
     // Small look-ahead helps the first-person view without revealing the whole route.
-    if (!result && localIndex < screen.length - 1) {
+    if (!result && !global && localIndex < screen.length - 1) {
       const lookAhead = Math.min(screen.length - 1, localIndex + Math.max(4, Math.floor(screen.length * 0.2)));
       ctx.save();
       ctx.setLineDash([3, 10]);
@@ -1314,20 +1340,30 @@ export class MotionStage {
   }
 
 
-  /** 封面/成绩卡用的整条轨迹（抽稀缓存，构建一次终身复用）。 */
-  private overviewRouteCache: MapRoutePoint[] | null = null;
+  /** 封面/成绩卡/全局视角用的整条轨迹（抽稀缓存，构建一次终身复用）。 */
+  private overviewRouteCache: { points: MapRoutePoint[]; stride: number } | null = null;
 
   private overviewRoute(): MapRoutePoint[] {
-    const route = this.map.route;
+    return this.overviewRouteData().points;
+  }
+
+  private overviewRouteData(): { points: MapRoutePoint[]; stride: number } {
     if (!this.overviewRouteCache) {
+      const route = this.map.route;
       const stride = Math.max(1, Math.ceil(route.length / 1500));
       const out: MapRoutePoint[] = [];
       for (let i = 0; i < route.length; i += stride) out.push(route[i]);
       const last = route[route.length - 1];
       if (out[out.length - 1] !== last) out.push(last);
-      this.overviewRouteCache = out;
+      this.overviewRouteCache = { points: out, stride };
     }
     return this.overviewRouteCache;
+  }
+
+  /** 逐点轨迹下标 → 抽稀总览轨迹下标（全局视角渐进描绘用）。 */
+  private overviewIndexOf(pointIndex: number): number {
+    const data = this.overviewRouteData();
+    return Math.min(data.points.length - 1, Math.floor(pointIndex / data.stride));
   }
 
   private drawMarkers(

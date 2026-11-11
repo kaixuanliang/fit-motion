@@ -35,6 +35,7 @@
       <symbol id="i-hourglass" viewBox="0 0 24 24"><path d="M6 3h12M6 21h12M7 3v4l5 5 5-5V3M7 21v-4l5-5 5 5v4"/></symbol>
       <symbol id="i-flame" viewBox="0 0 24 24"><path d="M12 3s-6 5-6 10a6 6 0 0 0 12 0c0-2-1-4-2.5-5.5-.3 1.5-1.2 2.4-2.5 2.5.8-2.3.3-5-1-7Z"/></symbol>
       <symbol id="i-share" viewBox="0 0 24 24"><circle cx="6" cy="12" r="2.5"/><circle cx="17" cy="5.5" r="2.5"/><circle cx="17" cy="18.5" r="2.5"/><path d="m8.3 10.8 6.4-4M8.3 13.2l6.4 4"/></symbol>
+      <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14.2 14.2 0 0 1 0 18 14.2 14.2 0 0 1 0-18Z"/></symbol>
     </svg>
 
     <div class="app" id="app" data-view="records">
@@ -304,6 +305,7 @@
               <div class="timeline-track"><div class="timeline-thumb" id="timeline-thumb"></div></div>
             </div>
             <button class="icon-btn" id="replay-btn" type="button" aria-label="重播"><svg><use href="#i-replay"/></svg></button>
+            <button class="icon-btn" id="view-toggle" type="button" aria-label="切换第一视角/全局视角" title="切换第一视角/全局视角"><svg><use href="#i-globe"/></svg></button>
             <button class="icon-btn" id="fullscreen-btn" type="button" aria-label="全屏播放"><svg><use href="#i-expand"/></svg></button>
           </div>
 
@@ -359,6 +361,7 @@
           <button class="cta share-cta" id="share-video-btn" type="button"><svg><use href="#i-share"/></svg> 分享视频给好友</button>
 
           <div class="sub-actions">
+            <button class="sub" id="export-poster-btn" type="button">保存路线图</button>
             <button class="sub" id="export-track-fit" type="button">导出 FIT</button>
             <button class="sub" id="export-track-gpx" type="button">导出 GPX</button>
             <button class="sub" id="export-track-tcx" type="button">导出 TCX</button>
