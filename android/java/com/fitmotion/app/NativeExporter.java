@@ -433,11 +433,19 @@ final class NativeEncoder {
     }
 
     synchronized void encodeScene(NativeScene scene, int index, int totalFrames) throws IOException {
+        encodeScene(scene, index, totalFrames, index);
+    }
+
+    /**
+     * 分章导出用：场景按章内帧号驱动（时序、HUD 全部以章为周期），PTS 用
+     * 全局帧号，保证拼接后整条片子的音画节拍连续。
+     */
+    synchronized void encodeScene(NativeScene scene, int index, int totalFrames, int ptsIndex) throws IOException {
         if (finished || encoder == null) throw new IOException("编码器已结束");
         long started = System.nanoTime();
         scene.draw(width, height, index, totalFrames);
         long drawn = System.nanoTime();
-        long ptsNs = index * 1_000_000_000L / fps;
+        long ptsNs = ptsIndex * 1_000_000_000L / fps;
         EGLExt.eglPresentationTimeANDROID(eglDisplay, eglSurface, ptsNs);
         if (!EGL14.eglSwapBuffers(eglDisplay, eglSurface)) throw new IOException("eglSwapBuffers 失败");
         long swapped = System.nanoTime();

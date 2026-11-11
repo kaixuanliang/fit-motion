@@ -154,6 +154,37 @@ function distanceAnalogy(km: number): string {
 
 export { distanceAnalogy };
 
+/** 年度回顾视频分章：每月取里程最大的一次骑行作代表。 */
+export interface MonthChapter {
+  /** 0-based 月份 */
+  month: number;
+  /** 当月骑行次数 */
+  rides: number;
+  /** 当月总里程（米） */
+  meters: number;
+  meta: ActivityMeta;
+}
+
+export async function monthChapters(year: number): Promise<MonthChapter[]> {
+  const metas = await metasOfYear(year);
+  const best = new Map<number, ActivityMeta>();
+  const rides = new Map<number, number>();
+  const meters = new Map<number, number>();
+  for (const meta of metas) {
+    const month = new Date(meta.start).getMonth();
+    rides.set(month, (rides.get(month) ?? 0) + 1);
+    meters.set(month, (meters.get(month) ?? 0) + meta.distance);
+    const cur = best.get(month);
+    if (!cur || meta.distance > cur.distance) best.set(month, meta);
+  }
+  return [...best.keys()].sort((a, b) => a - b).map((month) => ({
+    month,
+    rides: rides.get(month) ?? 1,
+    meters: meters.get(month) ?? 0,
+    meta: best.get(month)!,
+  }));
+}
+
 export async function computeYearReview(year: number): Promise<YearReview | null> {
   const metas = await metasOfYear(year);
   if (metas.length === 0) return null;

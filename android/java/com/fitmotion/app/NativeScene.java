@@ -199,6 +199,14 @@ final class NativeRouteScene implements NativeScene {
     private ByteBuffer posterPixels;
     private int posterHoldStart;
 
+    // 年度回顾分章：每章开头 2 秒左右显示「N 月 · 数据」大字徽标，代替
+    // 成绩卡（分章的成绩卡只留给最后一章的年度收尾，避免每章一张卡）。
+    private final String chapterBadge;
+    private final String chapterBadgeSub;
+    private final boolean noOutro;
+    private Bitmap badgeBitmap;
+    private int badgeTexture;
+
     // Per-frame cost of the last draw, read by the render loop so the export
     // report can tell a slow cruise frame from a slow poster frame.
     long lastTileMs;
@@ -237,6 +245,9 @@ final class NativeRouteScene implements NativeScene {
         this.heart = payload.optString("maxHeart", "—");
         this.maxSpeedText = payload.optString("maxSpeed", "—");
         this.maxAltitudeText = payload.optString("maxAltitude", "—");
+        this.chapterBadge = payload.optString("chapterBadge", null);
+        this.chapterBadgeSub = payload.optString("chapterBadgeSub", "");
+        this.noOutro = payload.optBoolean("noOutro", false);
 
         String theme = payload.optString("theme", "tech");
         boolean bright = "bright".equals(theme);
@@ -545,7 +556,7 @@ final class NativeRouteScene implements NativeScene {
     private void buildTimeline() {
         int coverFrames = Math.max(2, Math.round(COVER_SECONDS * fps));
         int introFrames = Math.max(2, Math.round(INTRO_SECONDS * fps));
-        int outroFrames = Math.max(6, Math.round(OUTRO_SECONDS * fps));
+        int outroFrames = noOutro ? 0 : Math.max(6, Math.round(OUTRO_SECONDS * fps));
         int pauseFrames = Math.max(4, Math.round(PAUSE_SECONDS * fps));
         int fixed = coverFrames + introFrames + outroFrames + pauseFrames * moments.length;
         if (fixed > totalFrames * 0.85f) {
@@ -662,6 +673,7 @@ final class NativeRouteScene implements NativeScene {
             drawTexture(posterTex, 0, 0, width, height, 1f);
             long markerStart = System.nanoTime();
             drawMarker(fitCamX, fitCamY, fitScale, 1f, frameIndex);
+            drawChapterBadge(frameIndex);
             lastTileMs = 0;
             lastHudMs = 0;
             lastRouteMs = (System.nanoTime() - markerStart) / 1_000_000L;
@@ -763,7 +775,10 @@ final class NativeRouteScene implements NativeScene {
         } else {
             resultReveal = 0f;
         }
+        // 分章模式：封面/入场窗口由章节徽标占位，成绩卡只留给最后一章。
+        if (chapterBadge != null && frameIndex < introEnd) resultReveal = 0f;
         drawHud(hudProgress, frameIndex, resultReveal, 1f);
+        drawChapterBadge(frameIndex);
         lastHudMs = (System.nanoTime() - hudStart) / 1_000_000L;
         hudMs += lastHudMs;
 
@@ -1717,6 +1732,90 @@ final class NativeRouteScene implements NativeScene {
         if (resultReveal > 0f && hudResultTexture != 0) {
             drawTexture(hudResultTexture, 0, 0, width, height, easeInOut(resultReveal));
         }
+    }
+
+    /**
+     * 章节徽标：固定取景下观众已经看得到全貌，这里只补「这是哪个月」。
+     * 文案整章不变，画一次位图就够；淡入 0.3s，在入场结束（introEnd）后
+     * 再驻留 0.5s 淡出，把画面完整交还给巡航 HUD。
+     */
+    private void drawChapterBadge(int frameIndex) {
+        if (chapterBadge == null) return;
+        int holdFrames = introEnd + Math.round(0.5f * fps);
+        if (frameIndex >= holdFrames) {
+            if (badgeTexture != 0) {
+                GLES20.glDeleteTextures(1, new int[]{badgeTexture}, 0);
+                badgeTexture = 0;
+            }
+            return;
+        }
+        if (badgeBitmap == null) paintChapterBadge();
+        if (badgeTexture == 0) badgeTexture = upload(badgeBitmap, 0);
+        float fadeIn = Math.min(1f, frameIndex / Math.max(1f, 0.3f * fps));
+        float fadeOut = Math.min(1f, (holdFrames - frameIndex) / Math.max(1f, 0.5f * fps));
+        float alpha = easeInOut(fadeIn) * easeInOut(fadeOut);
+        if (alpha <= 0.01f) return;
+        // 路线下缘最高到 y≈1030（fitAnchor 700 + 半高 330），徽标固定放在
+        // 它下面的成绩卡区（该窗口内成绩卡被徽标顶掉，不会撞）。
+        float top = Math.max(1040f, Math.round(height * 0.5625f));
+        drawTexture(badgeTexture, 0, top, width, badgeBitmap.getHeight(), alpha);
+    }
+
+    private void paintChapterBadge() {
+        int h = 340;
+        badgeBitmap = Bitmap.createBitmap(width, h, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(badgeBitmap);
+        Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        paint.setTextAlign(Paint.Align.CENTER);
+        paint.setColor(accent);
+        paint.setTextSize(112);
+        paint.setFakeBoldText(true);
+        canvas.drawText(chapterBadge, width / 2f, 168, paint);
+        if (!chapterBadgeSub.isEmpty()) {
+            paint.setColor(withAlpha(textColor, 0.85f));
+            paint.setTextSize(40);
+            paint.setFakeBoldText(false);
+            canvas.drawText(chapterBadgeSub, width / 2f, 262, paint);
+        }
+    }
+
+    /**
+     * 分章导出：每章一个场景，编码完立刻释放 GL 纹理与位图，把下一段的
+     * 内存峰值压回单条视频的水平。必须在持有 EGL 上下文的渲染线程调用。
+     */
+    void release() {
+        int[] textures = new int[]{
+                posterTex, hudTopTexture, hudBottomTexture, hudResultTexture,
+                kmAtlasTexture, badgeTexture,
+        };
+        for (int texture : textures) {
+            if (texture != 0) GLES20.glDeleteTextures(1, new int[]{texture}, 0);
+        }
+        if (bubbleTextures != null) {
+            for (int texture : bubbleTextures) {
+                if (texture != 0) GLES20.glDeleteTextures(1, new int[]{texture}, 0);
+            }
+        }
+        if (drawerTextures != null) {
+            for (int texture : drawerTextures) {
+                if (texture != 0) GLES20.glDeleteTextures(1, new int[]{texture}, 0);
+            }
+        }
+        posterTex = 0;
+        hudTopTexture = 0;
+        hudBottomTexture = 0;
+        hudResultTexture = 0;
+        kmAtlasTexture = 0;
+        badgeTexture = 0;
+        if (posterBitmap != null) { posterBitmap.recycle(); posterBitmap = null; }
+        posterPixels = null;
+        badgeBitmap = null;
+        hudTop.recycle();
+        hudBottom.recycle();
+        hudResult.recycle();
+        if (kmAtlas != null) kmAtlas.recycle();
+        for (Bitmap bitmap : bubbleBitmaps) if (bitmap != null) bitmap.recycle();
+        for (Bitmap bitmap : drawerBitmaps) if (bitmap != null) bitmap.recycle();
     }
 
     private void paintHudTop(float progress) {
@@ -2685,6 +2784,10 @@ final class NativeRenderJob {
     static JSONObject render(Context context, String payloadJson) throws Exception {
         cancelRequested = false;
         JSONObject payload = new JSONObject(payloadJson);
+        JSONArray chapters = payload.optJSONArray("chapters");
+        if (chapters != null && chapters.length() > 0) {
+            return renderChapters(context, payload, chapters);
+        }
         int width = payload.optInt("width", 1080);
         int height = payload.optInt("height", 1920);
         int fps = payload.optInt("fps", 30);
@@ -2761,47 +2864,13 @@ final class NativeRenderJob {
             progressDone.set(totalFrames);
             long loopMs = SystemClock.elapsedRealtime() - loopStart;
             File encoded = encoder.finish();
-            // 背景音乐：JS 侧把整轨渲染成 base64 的 16-bit PCM 一并送来，
-            // 这里编成 AAC 与视频混流。视频轨原样拷贝，不重编码。
-            long audioMs = -1;
-            long audioTrackMs = -1;
-            long outMs = -1;
-            String audioNote = null;
-            File result = encoded;
-            JSONObject audio = payload.optJSONObject("audio");
-            if (audio != null) {
-                String b64 = audio.optString("pcm", "");
-                int sampleRate = audio.optInt("sampleRate", 44100);
-                int channels = Math.max(1, Math.min(2, audio.optInt("channels", 2)));
-                if (b64.length() > 0) {
-                    progressPhase = "audio";
-                    byte[] pcm = android.util.Base64.decode(b64, android.util.Base64.DEFAULT);
-                    File mixed = new File(context.getCacheDir(),
-                            "fit-motion-audio-" + System.currentTimeMillis() + ".mp4");
-                    try {
-                        AudioMixer.Result mix = AudioMixer.mux(encoded, pcm, sampleRate, channels, mixed);
-                        audioMs = mix.mixMs;
-                        audioTrackMs = mix.audioTrackMs;
-                        outMs = mix.outMs;
-                        encoded.delete();
-                        result = mixed;
-                    } catch (Exception mixError) {
-                        // 混流失败也要给用户一条能用的片子：退回静音版，并把原因报给前端。
-                        try { mixed.delete(); } catch (Exception ignored) { }
-                        audioNote = mixError.getMessage() == null ? "混流失败" : mixError.getMessage();
-                    }
-                }
-            }
-            long elapsed = SystemClock.elapsedRealtime() - started;
+            JSONObject response = new JSONObject();
+            response.put("ok", true);
+            File result = mixAudioIfNeeded(context, payload, encoded, response);
             String uri = NativeFrameServer.saveNativeVideo(context, result);
             result.delete();
-            JSONObject response = new JSONObject();
-            if (audioMs >= 0) response.put("audioMs", audioMs);
-            if (audioTrackMs >= 0) response.put("audioTrackMs", audioTrackMs);
-            if (outMs >= 0) response.put("outMs", outMs);
-            if (audioNote != null) response.put("audioNote", audioNote);
-            response.put("ok", true);
             response.put("uri", uri);
+            long elapsed = SystemClock.elapsedRealtime() - started;
             response.put("seconds", elapsed / 1000.0);
             response.put("frames", totalFrames);
             response.put("fps", totalFrames / Math.max(0.001, elapsed / 1000.0));
@@ -2819,6 +2888,131 @@ final class NativeRenderJob {
             putPhase(response, "cover", segFrames, segDraw, segTile, segRoute, segHud, 0);
             putPhase(response, "cruise", segFrames, segDraw, segTile, segRoute, segHud, 1);
             putPhase(response, "outro", segFrames, segDraw, segTile, segRoute, segHud, 2);
+            return response;
+        } catch (Exception error) {
+            try { encoder.abort(); } catch (Exception ignored) { }
+            throw error;
+        }
+    }
+
+    /**
+     * 背景音乐：JS 侧把整轨渲染成 base64 的 16-bit PCM 一并送来，
+     * 这里编成 AAC 与视频混流。视频轨原样拷贝，不重编码。
+     * 单条与分章两条出口共用；混流失败退回静音版并把原因写进响应。
+     */
+    private static File mixAudioIfNeeded(Context context, JSONObject payload, File encoded,
+                                         JSONObject response) throws Exception {
+        JSONObject audio = payload.optJSONObject("audio");
+        if (audio == null) return encoded;
+        String b64 = audio.optString("pcm", "");
+        int sampleRate = audio.optInt("sampleRate", 44100);
+        int channels = Math.max(1, Math.min(2, audio.optInt("channels", 2)));
+        if (b64.length() == 0) return encoded;
+        progressPhase = "audio";
+        byte[] pcm = android.util.Base64.decode(b64, android.util.Base64.DEFAULT);
+        File mixed = new File(context.getCacheDir(),
+                "fit-motion-audio-" + System.currentTimeMillis() + ".mp4");
+        try {
+            AudioMixer.Result mix = AudioMixer.mux(encoded, pcm, sampleRate, channels, mixed);
+            response.put("audioMs", mix.mixMs);
+            response.put("audioTrackMs", mix.audioTrackMs);
+            response.put("outMs", mix.outMs);
+            encoded.delete();
+            return mixed;
+        } catch (Exception mixError) {
+            // 混流失败也要给用户一条能用的片子：退回静音版，并把原因报给前端。
+            try { mixed.delete(); } catch (Exception ignored) { }
+            String note = mixError.getMessage() == null ? "混流失败" : mixError.getMessage();
+            response.put("audioNote", note);
+            return encoded;
+        }
+    }
+
+    /**
+     * 年度回顾分章导出：payload.chapters[] 携带每章一份完整的场景 payload
+     * （globalView 强制开、非末章 noOutro）。一个编码器会话贯穿全片，逐章
+     * 建 NativeVectorMap + NativeRouteScene → 预光栅 → 编码 → 释放，PTS 用
+     * 全局帧号保持连续。相邻章节的瓦片走磁盘缓存，地理邻近的路线几乎不
+     * 重复下载；内存峰值与单条视频相同。
+     */
+    static JSONObject renderChapters(Context context, JSONObject payload, JSONArray chapters) throws Exception {
+        int width = payload.optInt("width", 1080);
+        int height = payload.optInt("height", 1920);
+        int fps = payload.optInt("fps", 30);
+        int bitrate = payload.optInt("bitrate", 4_000_000);
+        int count = chapters.length();
+        int totalFramesAll = 0;
+        for (int c = 0; c < count; c += 1) {
+            totalFramesAll += Math.max(1,
+                    (int) Math.ceil(chapters.getJSONObject(c).optDouble("durationSec", 7.2) * fps));
+        }
+        File temp = new File(context.getCacheDir(),
+                "fit-motion-native-scene-" + System.currentTimeMillis() + ".mp4");
+        long started = SystemClock.elapsedRealtime();
+        int threads = Math.max(2, Math.min(5, Runtime.getRuntime().availableProcessors() - 2));
+
+        progressPhase = "prefetch";
+        progressDone.set(0);
+        progressTotal.set(count);
+        NativeEncoder encoder = new NativeEncoder(width, height, bitrate, fps, temp);
+        int ptsFrame = 0;
+        int framesDone = 0;
+        int rasterTotal = 0;
+        long tileLoadMs = 0;
+        try {
+            encoder.start();
+            for (int c = 0; c < count; c += 1) {
+                if (cancelRequested) throw new java.io.IOException("导出已取消");
+                JSONObject chapter = chapters.getJSONObject(c);
+                chapter.put("globalView", true);
+                if (c < count - 1) chapter.put("noOutro", true);
+                long tilesStart = SystemClock.elapsedRealtime();
+                NativeVectorMap follow = new NativeVectorMap(chapter, context.getCacheDir(),
+                        NativeVectorMap.FOLLOW_ZOOM, false, false);
+                NativeVectorMap overview = new NativeVectorMap(chapter, context.getCacheDir(),
+                        overviewZoom(chapter), true);
+                NativeRouteScene scene = new NativeRouteScene(chapter, follow, overview, width, height, fps);
+                tileLoadMs += SystemClock.elapsedRealtime() - tilesStart;
+                progressDone.set(c);
+
+                List<long[]> overviewTargets = scene.overviewPrerasterTargets();
+                overview.setBitmapLimit(Math.max(scene.overviewCacheLimit(), overviewTargets.size() + 24));
+                overview.ensureTiles(overviewTargets);
+                progressPhase = "raster";
+                rasterTotal += overviewTargets.size();
+                progressTotal.set(rasterTotal);
+                overview.preRaster(overviewTargets, scene.overviewTilePx(), threads, progressDone);
+                overview.awaitPreRaster();
+                if (cancelRequested) throw new java.io.IOException("导出已取消");
+
+                int totalFrames = Math.max(1,
+                        (int) Math.ceil(chapter.optDouble("durationSec", 7.2) * fps));
+                progressPhase = "render";
+                progressTotal.set(totalFramesAll);
+                for (int i = 0; i < totalFrames; i += 1) {
+                    if (cancelRequested) throw new java.io.IOException("导出已取消");
+                    progressDone.set(framesDone + i);
+                    encoder.encodeScene(scene, i, totalFrames, ptsFrame + i);
+                }
+                framesDone += totalFrames;
+                ptsFrame += totalFrames;
+                scene.release();
+                follow.drainDeleted();
+                overview.drainDeleted();
+            }
+            progressDone.set(totalFramesAll);
+            long elapsed = SystemClock.elapsedRealtime() - started;
+            File encoded = encoder.finish();
+            JSONObject response = new JSONObject();
+            response.put("ok", true);
+            response.put("chapters", count);
+            response.put("frames", totalFramesAll);
+            response.put("tileLoadMs", tileLoadMs);
+            File result = mixAudioIfNeeded(context, payload, encoded, response);
+            String uri = NativeFrameServer.saveNativeVideo(context, result);
+            result.delete();
+            response.put("uri", uri);
+            response.put("seconds", elapsed / 1000.0);
             return response;
         } catch (Exception error) {
             try { encoder.abort(); } catch (Exception ignored) { }
