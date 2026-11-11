@@ -96,6 +96,13 @@ final class NativeRouteScene implements NativeScene {
     private final String maxSpeedText;
     private final String maxAltitudeText;
     private final double totalMeters;
+    /**
+     * 展示用总里程。合并行程（多日 / 同一条路线多刷）只播放一遍几何，但
+     * HUD 与成绩卡要显示真实总量，因此可能大于 totalMeters。
+     */
+    private final double displayMeters;
+    /** 真实时长 ÷ 播放时长：HUD 计时按它放大，避免「518km 只用了 8 小时」。 */
+    private final double timeScale;
     private final float[] speedSeries;
     private final float[] speedNorm;
     private final float[] heartSeries;
@@ -241,6 +248,10 @@ final class NativeRouteScene implements NativeScene {
         parseRoute(payload.optJSONArray("points"));
         totalDistance = cumulative[cumulative.length - 1];
         totalMeters = Math.max(1.0, payload.optDouble("distanceMeters", totalDistance));
+        displayMeters = Math.max(totalMeters, payload.optDouble("displayMeters", totalMeters));
+        timeScale = activitySeconds > 0 && movingSeconds > 0
+                ? Math.max(1.0, movingSeconds / activitySeconds)
+                : 1.0;
         speedSeries = parseRawSeries(payload.optJSONArray("speedSeries"));
         speedNorm = normalizeSeries(speedSeries);
         heartSeries = parseRawSeries(payload.optJSONArray("heartSeries"));
@@ -1691,7 +1702,7 @@ final class NativeRouteScene implements NativeScene {
         float y = 52;
         float h = 64;
         float placeWidth = measure(place, 34, true);
-        String elapsed = "用时 " + formatClock(activitySeconds * progress);
+        String elapsed = "用时 " + formatClock(activitySeconds * progress * timeScale);
         float startWidth = startText.isEmpty() ? 0f : measure(startText, 22, false);
         float elapsedWidth = measure(elapsed, 22, false);
         float w = 44 + placeWidth + (startText.isEmpty() ? 0f : 20f + startWidth) + 20f + elapsedWidth + 24f;
@@ -1909,8 +1920,8 @@ final class NativeRouteScene implements NativeScene {
 
         List<String[]> items = new ArrayList<>();
         items.add(new String[]{"route", "距离",
-                String.format(Locale.US, "%.2f", totalMeters * progress / 1000.0), "公里"});
-        items.add(new String[]{"clock", "时间", formatClock(activitySeconds * progress), ""});
+                String.format(Locale.US, "%.2f", displayMeters * progress / 1000.0), "公里"});
+        items.add(new String[]{"clock", "时间", formatClock(activitySeconds * progress * timeScale), ""});
         if (heartSeries.length > 0) {
             items.add(new String[]{"heart", "心率",
                     String.valueOf(Math.round(sampleSeries(heartSeries, progress))), "次/分钟"});
@@ -1965,10 +1976,10 @@ final class NativeRouteScene implements NativeScene {
         canvas.drawRect(0, 0, width, height, scrim);
 
         List<String[]> metrics = new ArrayList<>();
-        metrics.add(new String[]{"route", "总距离", formatDistance(totalMeters), "公里", String.valueOf(accent)});
-        metrics.add(new String[]{"clock", "运动时长", formatClock(movingSeconds), "时:分:秒", String.valueOf(accent2)});
+        metrics.add(new String[]{"route", "总距离", formatDistance(displayMeters), "公里", String.valueOf(accent)});
+        metrics.add(new String[]{"clock", "运动时长", formatSpan(movingSeconds), spanUnit(movingSeconds), String.valueOf(accent2)});
         if (elapsedAvailable) {
-            metrics.add(new String[]{"hourglass", "总时长", formatClock(elapsedSeconds), "时:分:秒", String.valueOf(accent2)});
+            metrics.add(new String[]{"hourglass", "总时长", formatSpan(elapsedSeconds), spanUnit(elapsedSeconds), String.valueOf(accent2)});
         }
         if (!"—".equals(maxSpeedText) && !maxSpeedText.isEmpty()) {
             metrics.add(new String[]{"speedometer", "最快速度", maxSpeedText, "公里/小时", String.valueOf(ORANGE)});
@@ -2423,6 +2434,19 @@ final class NativeRouteScene implements NativeScene {
 
     private static String formatDistance(double meters) {
         return String.format(Locale.US, "%.2f", meters / 1000.0);
+    }
+
+    private static String formatSpan(double seconds) {
+        int total = (int) Math.max(0, Math.round(seconds));
+        if (total < 86400) return formatClock(total);
+        int days = total / 86400;
+        int hours = (int) Math.round((total % 86400) / 3600.0);
+        return hours > 0 ? days + " 天 " + hours + " 小时" : days + " 天";
+    }
+
+    /** 跨天时长自带单位，卡片里不再补「时:分:秒」。 */
+    private static String spanUnit(double seconds) {
+        return seconds >= 86400 ? "" : "时:分:秒";
     }
 
     private static String formatClock(double seconds) {

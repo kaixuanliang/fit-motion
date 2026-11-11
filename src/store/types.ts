@@ -6,6 +6,8 @@
  * 骑行大约 1.5 MB，比存原始 JSON 小一个数量级。
  */
 
+import type { TripInfo } from '../fit/types';
+
 export type SourceKind = 'fit' | 'gpx' | 'tcx' | 'huawei' | 'merged';
 
 export const SOURCE_LABEL: Record<SourceKind, string> = {
@@ -125,6 +127,11 @@ export interface StoredTrack {
   hasTimestamps: boolean;
   sportHint: number;
   session: StoredSession;
+  /**
+   * 合并行程的分段信息（多日行程、同路线多刷）。普通记录没有这个字段，
+   * 旧数据读出来是 undefined，按「单段」处理即可。
+   */
+  trip?: TripInfo;
 }
 
 export interface StoredFile {

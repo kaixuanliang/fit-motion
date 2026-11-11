@@ -381,7 +381,7 @@ async function boot(): Promise<void> {
     await records?.reload();
     await refreshPanels();
     showToast(outcome.status === 'added'
-      ? `已合并为「${outcome.name}」：${(outcome.distanceM / 1000).toFixed(1)} km · ${formatDuration(outcome.durationSec)}`
+      ? `已合并为「${outcome.name}」：${(outcome.distanceM / 1000).toFixed(1)} km · ${formatDuration(outcome.durationSec)}${outcome.repeated > 0 ? `（${outcome.repeated} 段同路线已去重）` : ''}`
       : `这 ${outcome.count} 段已经合并过，没有重复生成。`, outcome.status !== 'added');
   });
   byId<HTMLButtonElement>('merge-open').addEventListener('click', () => void merger?.open());
@@ -1142,31 +1142,120 @@ function closeStudio(): void {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
+/** 跨天时长用「N 天 H 小时」；天以内沿用 HH:MM:SS。 */
+function formatTripSpan(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds));
+  if (total < 86400) return formatDuration(total, true);
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  return hours > 0 ? `${days} 天 ${hours} 小时` : `${days} 天`;
+}
+
+function tripKmText(meters: number): string {
+  const km = meters / 1000;
+  return km >= 100 ? `${km.toFixed(0)}` : km.toFixed(1);
+}
+
+/**
+ * 合并行程卡片：多日行程的每天、同一条路线骑了几次。
+ * 重复路线在地图上只画一条，这里把「第几次」与当次极值摊开给用户看。
+ */
+function renderTripCard(activity: Activity): void {
+  const card = document.getElementById('trip-card');
+  if (!card) return;
+  const trip = activity.trip;
+  if (!trip || trip.legs.length < 2) {
+    card.hidden = true;
+    return;
+  }
+  card.hidden = false;
+
+  const days = new Set(trip.legs.map((leg) => new Date(leg.start).toDateString())).size;
+  const allRepeat = trip.repeated === trip.legs.length - 1;
+  const kind = allRepeat ? '同一路线多次骑行' : trip.multiDay ? '多日行程' : '合并行程';
+
+  const title = document.getElementById('trip-title');
+  const sub = document.getElementById('trip-sub');
+  const badge = document.getElementById('trip-badge');
+  const list = document.getElementById('trip-legs');
+  const note = document.getElementById('trip-note');
+  if (title) title.textContent = kind;
+  if (sub) {
+    sub.textContent = `${days > 1 ? `${days} 天 · ` : ''}${trip.legs.length} 段 · 合计 ${tripKmText(trip.totalMeters)} km · ${formatTripSpan(trip.totalMovingSec)}`;
+  }
+  if (badge) badge.textContent = trip.repeated > 0 ? `${trip.repeated} 段同路线` : '逐段接续';
+
+  if (list) {
+    list.innerHTML = trip.legs.map((leg) => {
+      const date = new Date(leg.start);
+      const mmdd = `${String(date.getMonth() + 1).padStart(2, '0')}.${String(date.getDate()).padStart(2, '0')}`;
+      const tag = leg.repeat
+        ? (leg.repeatOf ? `同 D${leg.repeatOf}` : '同路线')
+        : leg.index === 1 ? '起' : '接续';
+      return `<li class="trip-leg${leg.repeat ? ' is-repeat' : ''}">
+        <span class="tl-day">D${leg.index}</span>
+        <span class="tl-date">${mmdd}</span>
+        <span class="tl-km">${tripKmText(leg.distanceM)} km · ${formatTripSpan(leg.movingSec)}</span>
+        <span class="tl-tag">${tag}</span>
+      </li>`;
+    }).join('');
+  }
+
+  if (note) {
+    const lines: string[] = [];
+    if (trip.repeated > 0) {
+      lines.push(`重复路线在地图上只绘制一次，播放也只走一遍；${trip.legs.length} 段骑行的最快速度、最高心率、最高海拔已取最优值展示。`);
+    }
+    if (trip.multiDay) {
+      const chained = trip.legs.some((leg) => !leg.repeat && leg.index > 1);
+      if (chained) {
+        const limit = trip.linkLimitM > 0 ? ` ≤ ${(trip.linkLimitM / 1000).toFixed(0)} km` : '';
+        lines.push(`共 ${days} 天，相邻两段首尾相接（衔接距离${limit}），轨迹按天连续拼接。`);
+      } else {
+        lines.push(`共 ${days} 天，同一条路线分 ${trip.legs.length} 次骑完。`);
+      }
+    }
+    note.textContent = lines.join(' ');
+  }
+}
+
 function populateSide(activity: Activity): void {
   const date = activity.timeAvailable ? formatDateParts(activity.startTime) : null;
+  const trip = activity.trip;
+  // 合并行程：界面上的「总距离/总时长/极值」按真实总量走，播放进度仍按实际
+  // 绘制的那一遍（activity.distanceM）推进。
+  const totalMeters = trip?.totalMeters ?? activity.distanceM;
+  const totalMoving = trip?.totalMovingSec ?? activity.movingSec;
+  const totalElapsed = trip?.totalElapsedSec ?? activity.elapsedSec;
+  const maxSpeed = trip?.best.maxSpeed ?? activity.maxSpeed;
+  const maxHr = trip?.best.maxHeartRate ?? activity.maxHeartRate;
+  const maxAlt = trip?.best.maxAltitude ?? activity.maxAltitude;
+  const avgSpeed = trip && trip.totalMovingSec > 0 ? trip.totalMeters / trip.totalMovingSec : activity.avgSpeed;
+
   byId<HTMLElement>('activity-title').textContent = activity.title;
   byId<HTMLElement>('activity-sub').textContent = date
-    ? `${activity.place}  ·  ${date.date} ${date.time}`
+    ? `${activity.place}  ·  ${date.date} ${date.time}${trip && trip.multiDay ? `  ·  ${new Set(trip.legs.map((leg) => new Date(leg.start).toDateString())).size} 天` : ''}`
     : activity.place;
-  byId<HTMLElement>('max-hr').textContent = activity.heartRateAvailable && activity.maxHeartRate
-    ? String(activity.maxHeartRate)
+  byId<HTMLElement>('max-hr').textContent = activity.heartRateAvailable && maxHr
+    ? String(Math.round(maxHr))
     : '--';
   byId<HTMLElement>('max-speed').textContent = activity.maxSpeedAvailable
-    ? formatSpeedKmh(activity.maxSpeed)
+    ? formatSpeedKmh(maxSpeed)
     : '--';
-  byId<HTMLElement>('total-distance').textContent = (activity.distanceM / 1000).toFixed(2);
+  byId<HTMLElement>('total-distance').textContent = (totalMeters / 1000).toFixed(2);
   byId<HTMLElement>('total-duration').textContent = activity.durationAvailable
-    ? formatDuration(activity.movingSec, true)
+    ? formatTripSpan(totalMoving)
     : '--';
   byId<HTMLElement>('total-elapsed').textContent = activity.elapsedAvailable
-    ? formatDuration(activity.elapsedSec, true)
+    ? formatTripSpan(totalElapsed)
     : '--';
   setMetric('avg-hr', 'avg-hr-unit', activity.avgHeartRate ? String(Math.round(activity.avgHeartRate)) : '--', '次/分');
-  setMetric('avg-speed', 'avg-speed-unit', activity.avgSpeedAvailable ? formatSpeedKmh(activity.avgSpeed) : '--', 'km/h');
+  setMetric('avg-speed', 'avg-speed-unit', activity.avgSpeedAvailable ? formatSpeedKmh(avgSpeed) : '--', 'km/h');
   setMetric('max-altitude', 'max-altitude-unit',
-    activity.altitudeAvailable && activity.maxAltitude != null ? String(Math.round(activity.maxAltitude)) : '--', '米');
+    activity.altitudeAvailable && maxAlt != null ? String(Math.round(maxAlt)) : '--', '米');
   setMetric('calories', 'calories-unit', activity.calories != null ? String(Math.round(activity.calories)) : '--', '千卡');
   byId<HTMLElement>('stage-device').textContent = `${activeTheme().label} · 1080P MP4`;
+  renderTripCard(activity);
 }
 
 /* ── 导出记录与常驻分享按钮 ─────────────────────────────────────── */
@@ -1670,6 +1759,18 @@ function nativeScenePayload(
     const point = activity.points[index];
     points.push([point.lat, point.lon]);
   }
+  // 合并行程：轨迹只画一遍（distanceMeters 供进度/公里刻度），成绩卡与 HUD
+  // 用 displayMeters / 真实时长 / 聚合极值，和创作页的数据卡保持一致。
+  const trip = activity.trip;
+  const displayMeters = trip?.totalMeters ?? activity.distanceM;
+  const movingSec = trip?.totalMovingSec ?? activity.movingSec;
+  const elapsedSec = trip?.totalElapsedSec ?? activity.elapsedSec;
+  const maxSpeed = trip?.best.maxSpeed ?? activity.maxSpeed;
+  const maxHeart = trip?.best.maxHeartRate ?? activity.maxHeartRate;
+  const maxAltitude = trip?.best.maxAltitude ?? activity.maxAltitude;
+  const avgSpeed = trip && trip.totalMovingSec > 0
+    ? trip.totalMeters / trip.totalMovingSec
+    : activity.avgSpeed;
   return {
     width: 1080,
     height: 1920,
@@ -1678,19 +1779,20 @@ function nativeScenePayload(
     durationSec: durationSec,
     activityDurationSec: activity.durationSec,
     // 尾页数据口径：运动时长用 movingSec（不含停留），总时长用 elapsedSec
-    movingDurationSec: activity.movingSec,
-    elapsedDurationSec: activity.elapsedSec,
+    movingDurationSec: movingSec,
+    elapsedDurationSec: elapsedSec,
     elapsedAvailable: activity.elapsedAvailable,
     title: activity.title,
     subtitle: date ? `${activity.place} · ${date.date}` : activity.place,
     place: activity.place,
     startText: date ? `开始 ${date.date.slice(5)}  ${date.time}` : '',
-    distance: (activity.distanceM / 1000).toFixed(2),
+    distance: (displayMeters / 1000).toFixed(2),
     distanceMeters: activity.distanceM,
-    maxSpeed: formatSpeedKmh(activity.maxSpeed),
-    avgSpeed: activity.avgSpeedAvailable ? formatSpeedKmh(activity.avgSpeed) : '',
-    maxHeart: activity.maxHeartRate ? String(Math.round(activity.maxHeartRate)) : '—',
-    maxAltitude: activity.maxAltitude != null ? String(Math.round(activity.maxAltitude)) : '—',
+    displayMeters,
+    maxSpeed: formatSpeedKmh(maxSpeed),
+    avgSpeed: activity.avgSpeedAvailable ? formatSpeedKmh(avgSpeed) : '',
+    maxHeart: maxHeart ? String(Math.round(maxHeart)) : '—',
+    maxAltitude: maxAltitude != null ? String(Math.round(maxAltitude)) : '—',
     calories: activity.calories != null ? String(Math.round(activity.calories)) : '',
     duration: activity.durationAvailable ? formatDuration(activity.durationSec) : '—',
     theme: theme.id,

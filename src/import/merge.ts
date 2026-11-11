@@ -18,12 +18,16 @@ export interface MergeOutcome {
   status: 'added' | 'duplicate-file' | 'no-gps' | 'error';
   id?: string;
   name: string;
-  /** 合并后的总距离（米） */
+  /** 合并后的总距离（米，含重复路线） */
   distanceM: number;
-  /** 合并后的运动时长（秒） */
+  /** 合并后的运动时长（秒，含重复路线） */
   durationSec: number;
   /** 参与合并的段数 */
   count: number;
+  /** 跨了几个自然日 */
+  days: number;
+  /** 其中的重复路线段数（几何已去重） */
+  repeated: number;
   message?: string;
 }
 
@@ -87,7 +91,19 @@ export async function mergeRecords(ids: string[]): Promise<MergeOutcome> {
 
   const parsed = mergeToParsed(activities);
   const count = activities.length;
-  const name = sport > 0 ? `合并${sportLabel(sport)} · ${count} 段` : `合并 · ${count} 段`;
+  const trip = parsed.trip;
+  const days = trip ? new Set(trip.legs.map((leg) => new Date(leg.start).toDateString())).size : 1;
+  const repeated = trip?.repeated ?? 0;
+  const label = sport > 0 ? sportLabel(sport) : '运动';
+  let name: string;
+  if (repeated > 0 && repeated === count - 1) {
+    // 全部是同一路线：体现「刷了几次」比「几段」更有意义
+    name = `${label}同一路线 · ${count} 次`;
+  } else if (days > 1) {
+    name = `多日${label} · ${days} 天 ${count} 段`;
+  } else {
+    name = `合并${label} · ${count} 段`;
+  }
   const key = `merge|${unique.sort().join(',')}|${count}`;
   const hash = await hashBytes(new TextEncoder().encode(key).buffer as ArrayBuffer);
   const result = await saveParsed({
@@ -110,9 +126,11 @@ export async function mergeRecords(ids: string[]): Promise<MergeOutcome> {
         : result.status === 'no-gps' ? 'no-gps' : 'error',
     id: result.id,
     name,
-    distanceM: parsed.sessions[0]?.distance ?? 0,
-    durationSec: parsed.sessions[0]?.timerTime ?? 0,
+    distanceM: trip?.totalMeters ?? parsed.sessions[0]?.distance ?? 0,
+    durationSec: trip?.totalMovingSec ?? parsed.sessions[0]?.timerTime ?? 0,
     count,
+    days,
+    repeated,
     message: result.message,
   };
 }

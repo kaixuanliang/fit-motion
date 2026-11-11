@@ -1,16 +1,30 @@
 import { buildActivity, type Activity, type RoutePoint } from '../fit/activity';
+import { linkDistance, linkLimitFor, sameRoute } from '../import/route-match';
 import { activityToFit } from './fit';
-import type { FitRecord, ParsedFit } from '../fit/types';
+import type { FitRecord, FitSession, ParsedFit, TripInfo, TripLeg } from '../fit/types';
 
 export type TrackFormat = 'gpx' | 'tcx' | 'fit';
 
+/** 本地自然日键：判断是不是多日行程（按用户所在时区，不按 UTC）。 */
+function dayKey(ms: number): string {
+  const date = new Date(ms);
+  return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+}
+
+function shortDate(ms: number): string {
+  const date = new Date(ms);
+  return `${date.getMonth() + 1}月${date.getDate()}日`;
+}
+
 /**
- * 把多段轨迹拼成一条（对齐华为运动健康的「合并运动记录」口径）：
- * - 只能合并同一种运动；
- * - 轨迹按开始时间先后拼接，段与段之间的空档不算运动时间；
- * - 距离 = 各段距离之和，运动时长 = 各段计时时间之和；
- * - 平均速度 = 总距离 / 运动时长，最高速度取各段最大；
- * - 爬升/下降/卡路里累加，平均心率按各段时长加权。
+ * 把多段轨迹拼成一条合并行程。规则：
+ * - 只能合并同一种运动，按开始时间先后排列；
+ * - **同一条路线只保留一次几何**（往返、同路线多刷）：轨迹点不重复拼接，
+ *   但这段的里程/时长仍计入合计，极值汇总进 TripInfo.best；
+ * - 不是同一条路线的段必须首尾相接（阈值随段长放宽，2~8km），否则直接报错，
+ *   避免地图上出现横穿地图的直线、第一视角瞬移；
+ * - 运动时长 = 实际绘制的那一遍（供视频/进度使用），真实总计另存 TripInfo；
+ * - 距离/爬升/卡路里累加，平均心率按时长加权，最高速取各段最大。
  */
 export function mergeToParsed(activities: Activity[]): ParsedFit {
   if (activities.length < 2) throw new Error('至少需要两条轨迹才能合并');
@@ -22,10 +36,57 @@ export function mergeToParsed(activities: Activity[]): ParsedFit {
     && part.points.length > 1
     && part.points[part.points.length - 1].t > 0);
 
+  interface Classified {
+    activity: Activity;
+    /** 与前面第几段是同一条路线（几何不重复拼接） */
+    repeatOf?: number;
+    /** 与上一段的衔接距离 */
+    linkM: number;
+    /** 这一段采用的衔接上限 */
+    limitM: number;
+  }
+
+  const classified: Classified[] = [];
+  const kept: Array<{ activity: Activity; index: number }> = [];
+  let previous: Activity | null = null;
+  let linkLimitM = 0;
+
+  for (let i = 0; i < parts.length; i += 1) {
+    const part = parts[i];
+    let repeatOf: number | undefined;
+    if (part.points.length > 1) {
+      for (const route of kept) {
+        if (sameRoute(route.activity.points, part.points)) {
+          repeatOf = route.index;
+          break;
+        }
+      }
+    }
+    let linkM = 0;
+    let limitM = 0;
+    if (repeatOf == null && previous) {
+      linkM = linkDistance(previous.points, part.points);
+      limitM = linkLimitFor(previous.distanceM, part.distanceM);
+      linkLimitM = Math.max(linkLimitM, limitM);
+      if (linkM > limitM) {
+        throw new Error(
+          `第 ${i + 1} 段（${shortDate(part.startTime)} · ${(part.distanceM / 1000).toFixed(1)} km）`
+          + `起点距离上一段终点 ${(linkM / 1000).toFixed(1)} km，超出可衔接范围（${(limitM / 1000).toFixed(0)} km）。`
+          + '多日行程要求相邻两段首尾相接；如果是两次独立出行，请分开生成视频。',
+        );
+      }
+    }
+    classified.push({ activity: part, repeatOf, linkM, limitM });
+    if (repeatOf == null) kept.push({ activity: part, index: i + 1 });
+    previous = part;
+  }
+
   const records: FitRecord[] = [];
   let synthetic = 0;
   let previousTime = 0;
-  for (const part of parts) {
+  for (const item of classified) {
+    if (item.repeatOf != null) continue;
+    const part = item.activity;
     const step = useTime ? 0 : Math.max(1, part.durationSec / Math.max(1, part.points.length - 1));
     for (const point of part.points) {
       if (useTime) {
@@ -48,28 +109,103 @@ export function mergeToParsed(activities: Activity[]): ParsedFit {
   }
   if (records.length < 2) throw new Error('合并后的轨迹点不足');
 
-  const startTime = useTime ? records[0].timestamp : parts[0].startTime;
-  const endTime = useTime ? records[records.length - 1].timestamp : undefined;
-  const timerSec = parts.reduce((sum, part) => sum + Math.max(1, part.durationSec), 0);
-  // 时间轴用首段开始到末段结束（含段间空档），运动时长仍按各段之和，
-  // 这样 buildActivity 在按 session 窗口裁点时不会把后面的段裁掉。
-  const spanSec = useTime && startTime != null && endTime != null
-    ? Math.max(1, (endTime - startTime) / 1000)
-    : timerSec;
-  const totalDistance = parts.reduce((sum, part) => sum + part.distanceM, 0);
+  const keptActivities = classified
+    .filter((item) => item.repeatOf == null)
+    .map((item) => item.activity);
+  const numbers = (values: Array<number | undefined>): number[] =>
+    values.filter((value): value is number => value != null && Number.isFinite(value));
+  const sum = (values: Array<number | undefined>): number =>
+    values.reduce<number>((acc, value) => acc + (value ?? 0), 0);
 
-  const ascents = parts.map((part) => part.ascent).filter(isNumber);
-  const descents = parts.map((part) => part.descent).filter(isNumber);
-  const calories = parts.reduce((sum, part) => sum + (part.calories ?? 0), 0);
-  const weightedHr = parts.reduce((acc, part) => {
+  const startTime = useTime ? records[0].timestamp : parts[0].startTime;
+  // 真实跨度：首段开始到「最后一段」结束。注意不能用 records 的末点 ——
+  // 重复路线的点不会拼进 records，末段是重复段时会算成第一次的结束时间，
+  // 跨天行程的「总时长」就缩回一天以内了。
+  const lastPart = parts[parts.length - 1];
+  const lastPoint = lastPart.points[lastPart.points.length - 1];
+  const endTime = useTime ? lastPoint?.t : undefined;
+  // 裁点窗口必须覆盖全部点，含停留与跨天间隔
+  const spanSec = useTime && startTime != null && endTime != null && endTime > startTime
+    ? Math.max(1, (endTime - startTime) / 1000)
+    : sum(parts.map((part) => Math.max(1, part.movingSec)));
+
+  const routeMeters = keptActivities.reduce((acc, part) => acc + part.distanceM, 0);
+  const totalMeters = parts.reduce((acc, part) => acc + part.distanceM, 0);
+  /** 视频/进度口径：实际只画一遍，时长也只算保留段 */
+  const playMovingSec = keptActivities.reduce((acc, part) => acc + Math.max(1, part.movingSec), 0);
+  const totalMovingSec = parts.reduce((acc, part) => acc + Math.max(1, part.movingSec), 0);
+
+  const weightedHr = keptActivities.reduce((acc, part) => {
     if (part.avgHeartRate == null) return acc;
-    const weight = Math.max(1, part.durationSec);
+    const weight = Math.max(1, part.movingSec);
     acc.total += part.avgHeartRate * weight;
     acc.weight += weight;
     return acc;
   }, { total: 0, weight: 0 });
-  const maxHr = parts.map((part) => part.maxHeartRate).filter(isNumber);
-  const maxSpeed = parts.map((part) => part.maxSpeed).filter(isNumber);
+
+  const keptMaxSpeed = numbers(keptActivities.map((part) => part.maxSpeed));
+  const keptMaxHr = numbers(keptActivities.map((part) => part.maxHeartRate));
+  const allMaxSpeed = numbers(parts.map((part) => part.maxSpeed));
+  const allMaxHr = numbers(parts.map((part) => part.maxHeartRate));
+  const allMaxAlt = numbers(parts.map((part) => part.maxAltitude));
+  const allAscent = numbers(parts.map((part) => part.ascent));
+
+  const repeated = classified.filter((item) => item.repeatOf != null).length;
+  const multiDay = new Set(parts.map((part) => dayKey(part.startTime))).size > 1;
+
+  const legs: TripLeg[] = classified.map((item, index) => {
+    const part = item.activity;
+    return {
+      index: index + 1,
+      start: part.startTime,
+      distanceM: part.distanceM,
+      movingSec: part.movingSec,
+      elapsedSec: part.elapsedSec,
+      ascent: part.ascent,
+      maxSpeed: part.maxSpeedAvailable ? part.maxSpeed : undefined,
+      maxHeartRate: part.maxHeartRate,
+      maxAltitude: part.maxAltitude,
+      repeat: item.repeatOf != null,
+      repeatOf: item.repeatOf,
+      linkM: item.repeatOf != null ? 0 : item.linkM,
+    };
+  });
+
+  const trip: TripInfo = {
+    legs,
+    multiDay,
+    routeMeters,
+    totalMeters,
+    totalMovingSec,
+    totalElapsedSec: Math.round(spanSec),
+    repeated,
+    best: {
+      maxSpeed: allMaxSpeed.length ? Math.max(...allMaxSpeed) : undefined,
+      maxHeartRate: allMaxHr.length ? Math.max(...allMaxHr) : undefined,
+      maxAltitude: allMaxAlt.length ? Math.max(...allMaxAlt) : undefined,
+      ascent: allAscent.length ? Math.round(allAscent.reduce((acc, value) => acc + value, 0)) : undefined,
+    },
+    linkLimitM,
+  };
+
+  const session: FitSession = {
+    startTime,
+    elapsedTime: spanSec,
+    timerTime: playMovingSec,
+    distance: routeMeters,
+    calories: parts.reduce((acc, part) => acc + (part.calories ?? 0), 0) || undefined,
+    sport: parts[0].sport,
+    subSport: parts[0].subSport,
+    avgHeartRate: weightedHr.weight > 0 ? Math.round(weightedHr.total / weightedHr.weight) : undefined,
+    maxHeartRate: keptMaxHr.length ? Math.max(...keptMaxHr) : undefined,
+    maxSpeed: keptMaxSpeed.length ? Math.max(...keptMaxSpeed) : undefined,
+    ascent: allAscent.length
+      ? Math.round(keptActivities.reduce((acc, part) => acc + (part.ascent ?? 0), 0))
+      : undefined,
+    descent: classified.length
+      ? Math.round(keptActivities.reduce((acc, part) => acc + (part.descent ?? 0), 0)) || undefined
+      : undefined,
+  };
 
   return {
     sourceType: parts[0].sourceType,
@@ -77,21 +213,9 @@ export function mergeToParsed(activities: Activity[]): ParsedFit {
     name: '合并轨迹',
     sportHint: parts[0].sport,
     records,
-    sessions: [{
-      startTime,
-      elapsedTime: spanSec,
-      timerTime: timerSec,
-      distance: totalDistance,
-      calories: calories > 0 ? calories : undefined,
-      sport: parts[0].sport,
-      subSport: parts[0].subSport,
-      avgHeartRate: weightedHr.weight > 0 ? Math.round(weightedHr.total / weightedHr.weight) : undefined,
-      maxHeartRate: maxHr.length ? Math.max(...maxHr) : undefined,
-      maxSpeed: maxSpeed.length ? Math.max(...maxSpeed) : undefined,
-      ascent: ascents.length ? Math.round(ascents.reduce((sum, value) => sum + value, 0)) : undefined,
-      descent: descents.length ? Math.round(descents.reduce((sum, value) => sum + value, 0)) : undefined,
-    }],
+    sessions: [session],
     laps: [],
+    trip,
   };
 }
 

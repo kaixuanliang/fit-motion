@@ -1666,6 +1666,120 @@ html.gl-preview #stage-canvas {
   color: var(--dim);
 }
 
+/* 合并行程：多日 / 同路线多刷的分段明细 */
+.trip-card {
+  margin-top: 10px;
+  padding: 14px 15px 12px;
+  border: 0.5px solid var(--line);
+  border-radius: 11px;
+  background: var(--card);
+  flex: 0 0 auto;
+}
+
+.trip-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.trip-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.trip-titles b {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.trip-titles small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.trip-badge {
+  flex: none;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--card-2);
+  border: 0.5px solid var(--line);
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.trip-legs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 11px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.trip-leg {
+  display: grid;
+  grid-template-columns: 24px 46px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  background: var(--card-2);
+  color: var(--text);
+  font-size: 11px;
+}
+
+.trip-leg .tl-day {
+  color: var(--dim);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+}
+
+.trip-leg .tl-date {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.trip-leg .tl-km {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.trip-leg .tl-tag {
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--bg-soft);
+  color: var(--muted);
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.trip-leg.is-repeat {
+  opacity: 0.85;
+}
+
+.trip-leg.is-repeat .tl-tag {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 0.5px solid var(--accent-line);
+}
+
+.trip-leg.is-repeat .tl-km {
+  color: var(--muted);
+}
+
+.trip-note {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
 .detail-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

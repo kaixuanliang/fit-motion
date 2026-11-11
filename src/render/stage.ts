@@ -66,8 +66,19 @@ export function runDurationFor(distanceM: number, avgSpeed: number): number {
   const shape = 8 + 7.5 * (Math.log(1 + km) / Math.log(101));
   return clamp(shape * paceFactor, RUN_MIN, RUN_MAX);
 }
-const PAUSE_SECONDS = 1.9;
-const INTRO_SECONDS = 1.0;
+/**
+ * 成绩卡里的时长：跨天行程显示「N 天 H 小时」，一天以内沿用 时:分:秒。
+ * 多日合并的总时长可能是 300 小时，HH:MM:SS 会挤爆卡片。
+ */
+function formatSpan(seconds: number): { value: string; unit: string } {
+  const total = Math.max(0, Math.round(seconds));
+  if (total < 86400) return { value: formatDuration(total), unit: '时:分:秒' };
+  const days = Math.floor(total / 86400);
+  const hours = Math.round((total % 86400) / 3600);
+  return { value: hours > 0 ? `${days} 天 ${hours} 小时` : `${days} 天`, unit: '' };
+}
+
+const PAUSE_SECONDS = 1.9;const INTRO_SECONDS = 1.0;
 // 片尾：拉回全景 + 成绩卡浮现约 1.1 秒，之后停在海报帧。留 1.2 秒静止尾巴即可，
 // 再长就变成「视频卡住了」。2026-11 起从 3.2s 压缩，配合走线曲线缩短整体时长。
 const OUTRO_SECONDS = 2.4;
@@ -95,6 +106,23 @@ export class MotionStage {
   private readonly schedule: ScheduledMoment[];
   private readonly runEnd: number;
   private readonly totalDuration: number;
+  /**
+   * 画面上的统计口径。合并行程（多日 / 同路线多刷）只播放一遍几何，
+   * 但 HUD 与成绩卡要显示真实总量：总距离、总时长、各段聚合后的极值。
+   * 普通记录这些值就等于 activity 自身字段。
+   */
+  private readonly display: {
+    meters: number;
+    movingSec: number;
+    elapsedSec: number;
+    maxSpeed: number;
+    avgSpeed: number;
+    maxHeartRate?: number;
+    maxAltitude?: number;
+    ascent?: number;
+    /** 真实时长 ÷ 播放时长：HUD 的计时按它放大，避免「518km 只用了 8 小时」 */
+    timeScale: number;
+  };
   private grainPattern?: CanvasPattern;
   private lastFrame: StageFrame;
   private follow: VectorFollowLayer | null = null;
@@ -117,6 +145,22 @@ export class MotionStage {
     this.ctx.imageSmoothingQuality = 'high';
 
     this.runDuration = runDurationFor(activity.distanceM, activity.avgSpeed);
+    const trip = activity.trip;
+    this.display = {
+      meters: trip?.totalMeters ?? activity.distanceM,
+      movingSec: trip?.totalMovingSec ?? activity.movingSec,
+      elapsedSec: trip?.totalElapsedSec ?? activity.elapsedSec,
+      maxSpeed: trip?.best.maxSpeed ?? activity.maxSpeed,
+      avgSpeed: trip && trip.totalMovingSec > 0
+        ? trip.totalMeters / trip.totalMovingSec
+        : activity.avgSpeed,
+      maxHeartRate: trip?.best.maxHeartRate ?? activity.maxHeartRate,
+      maxAltitude: trip?.best.maxAltitude ?? activity.maxAltitude,
+      ascent: trip?.best.ascent ?? activity.ascent,
+      timeScale: trip && activity.movingSec > 0
+        ? Math.max(1, trip.totalMovingSec / activity.movingSec)
+        : 1,
+    };
     const bounds = map.routeBounds;
     const routeW = Math.max(1, bounds.maxX - bounds.minX);
     const routeH = Math.max(1, bounds.maxY - bounds.minY);
@@ -290,7 +334,7 @@ export class MotionStage {
         phase: 'result',
         progress: 1,
         elapsed: this.activity.durationSec,
-        distance: this.activity.distanceM,
+        distance: this.display.meters,
         speed: 0,
         heartRate: this.activity.maxHeartRate,
         resultVisible: true,
@@ -322,7 +366,7 @@ export class MotionStage {
         phase: 'result',
         progress: 1,
         elapsed: this.activity.durationSec,
-        distance: this.activity.distanceM,
+        distance: this.display.meters,
         speed: 0,
         heartRate: this.activity.maxHeartRate,
         resultVisible: true,
@@ -407,7 +451,7 @@ export class MotionStage {
       phase: resultVisible ? 'result' : localTime < this.introDuration ? 'intro' : 'running',
       progress: timeline.progress,
       elapsed: timeline.progress >= 1 ? this.activity.durationSec : current.elapsed,
-      distance: timeline.progress * this.activity.distanceM,
+      distance: timeline.progress * this.display.meters,
       speed: timeline.progress >= 1 ? 0 : current.speed,
       heartRate: current.heartRate,
       resultVisible,
@@ -845,7 +889,7 @@ export class MotionStage {
       {
         icon: 'route',
         label: '距离',
-        value: ((progress * this.activity.distanceM) / 1000).toFixed(2),
+        value: ((progress * this.display.meters) / 1000).toFixed(2),
         unit: '公里',
       },
     ];
@@ -853,7 +897,7 @@ export class MotionStage {
       items.push({
         icon: 'clock',
         label: '时间',
-        value: formatDuration(current.elapsed, this.activity.durationSec >= 3600),
+        value: formatDuration(current.elapsed * this.display.timeScale, this.display.movingSec >= 3600),
         unit: '',
       });
     }
@@ -1369,7 +1413,7 @@ export class MotionStage {
 
   private drawKilometres(ctx: CanvasRenderingContext2D, camera: MapCamera, progress: number): void {
     if (progress < 0.02) return;
-    const totalKm = Math.floor(this.activity.distanceM / 1000);
+    const totalKm = Math.floor(this.display.meters / 1000);
     // Same ladder as the native renderer: the label interval grows with the
     // distance so a 200 km ride does not turn into a wall of numbers.
     const every = totalKm <= 10 ? 1 : totalKm <= 30 ? 5 : totalKm <= 80 ? 10 : totalKm <= 150 ? 20 : 25;
@@ -1378,8 +1422,10 @@ export class MotionStage {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     for (let km = every; km <= totalKm; km += every) {
-      if ((km * 1000) / this.activity.distanceM > progress) break;
-      const p = this.mapPointAtDistance(km * 1000);
+      // 刻度按「展示里程」分布，位置换算回实际绘制的那一遍轨迹
+      const ratio = (km * 1000) / this.display.meters;
+      if (ratio > progress) break;
+      const p = this.mapPointAtDistance(ratio * this.activity.distanceM);
       const screen = this.map.screenPoint(p, camera, WIDTH, HEIGHT);
       ctx.beginPath();
       ctx.arc(screen.x, screen.y, 3.4, 0, Math.PI * 2);
@@ -1393,14 +1439,16 @@ export class MotionStage {
 
   private drawResult(ctx: CanvasRenderingContext2D, reveal: number): void {
     const e = easeOutCubic(reveal);
+    const movingSpan = formatSpan(this.display.movingSec);
+    const elapsedSpan = formatSpan(this.display.elapsedSec);
     const metrics = [
-      this.resultMetric('route', '总距离', true, (this.activity.distanceM / 1000).toFixed(2), '公里', this.c.accent),
-      this.resultMetric('clock', '运动时长', this.activity.durationAvailable, this.activity.durationAvailable ? formatDuration(this.activity.movingSec) : '', '时:分:秒', this.c.blue),
-      this.resultMetric('clock', '总时长', this.activity.elapsedAvailable, this.activity.elapsedAvailable ? formatDuration(this.activity.elapsedSec) : '', '时:分:秒', this.c.blue),
-      this.resultMetric('speedometer', '最快速度', this.activity.maxSpeedAvailable, formatSpeedKmh(this.activity.maxSpeed), '公里/小时', this.c.orange),
-      this.resultMetric('heart', '最高心率', this.activity.heartRateAvailable, this.activity.maxHeartRate ? String(Math.round(this.activity.maxHeartRate)) : '', '次/分钟', this.c.red),
-      this.resultMetric('mountain', '最高海拔', this.activity.altitudeAvailable, this.activity.maxAltitude != null ? String(Math.round(this.activity.maxAltitude)) : '', '米', this.c.accent2),
-      this.resultMetric('gauge', '平均速度', this.activity.avgSpeedAvailable, formatSpeedKmh(this.activity.avgSpeed), '公里/小时', this.c.blue),
+      this.resultMetric('route', '总距离', true, (this.display.meters / 1000).toFixed(2), '公里', this.c.accent),
+      this.resultMetric('clock', '运动时长', this.activity.durationAvailable, movingSpan.value, movingSpan.unit, this.c.blue),
+      this.resultMetric('clock', '总时长', this.activity.elapsedAvailable, elapsedSpan.value, elapsedSpan.unit, this.c.blue),
+      this.resultMetric('speedometer', '最快速度', this.activity.maxSpeedAvailable, formatSpeedKmh(this.display.maxSpeed), '公里/小时', this.c.orange),
+      this.resultMetric('heart', '最高心率', this.activity.heartRateAvailable, this.display.maxHeartRate ? String(Math.round(this.display.maxHeartRate)) : '', '次/分钟', this.c.red),
+      this.resultMetric('mountain', '最高海拔', this.activity.altitudeAvailable, this.display.maxAltitude != null ? String(Math.round(this.display.maxAltitude)) : '', '米', this.c.accent2),
+      this.resultMetric('gauge', '平均速度', this.activity.avgSpeedAvailable, formatSpeedKmh(this.display.avgSpeed), '公里/小时', this.c.blue),
       this.resultMetric('flame', '消耗热量', this.activity.calories != null, this.activity.calories != null ? String(Math.round(this.activity.calories)) : '', '千卡', this.c.orange),
     ].filter((item): item is ResultMetric => item != null);
 

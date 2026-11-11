@@ -94,7 +94,8 @@ export function initMerge(onDone: (outcome: MergeOutcome) => Promise<void>): Mer
     }
     const distance = chosen.reduce((sum, meta) => sum + meta.distance, 0);
     const duration = chosen.reduce((sum, meta) => sum + meta.duration, 0);
-    hint.textContent = `已选 ${chosen.length} 条 · 合计 ${fmtKm(distance)} km · ${fmtDuration(duration)}`;
+    const days = new Set(chosen.map((meta) => new Date(meta.start).toDateString())).size;
+    hint.textContent = `已选 ${chosen.length} 条 · 合计 ${fmtKm(distance)} km · ${fmtDuration(duration)}${days > 1 ? ` · 跨 ${days} 天` : ''}`;
   };
 
   const render = (): void => {
@@ -170,7 +171,7 @@ export function initMerge(onDone: (outcome: MergeOutcome) => Promise<void>): Mer
       overlay.hidden = false;
       picked.clear();
       errorText = '';
-      if (sub) sub.textContent = '勾选 2 条以上同类型记录，按开始时间先后拼接成一条。';
+      if (sub) sub.textContent = '勾选 2 条以上同类型记录：同一条路线只画一条轨迹、数据取最优值；不同路线要求首尾相接。';
       if (list) list.innerHTML = '<p class="merge-hint">正在读取记录…</p>';
       if (confirm) {
         confirm.disabled = true;

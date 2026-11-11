@@ -1350,9 +1350,7 @@ h1 span::after {
   padding: 4px 0;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
-}
-
-.detail-grid > div {
+}.detail-grid > div {
   display: flex;
   align-items: baseline;
   justify-content: space-between;

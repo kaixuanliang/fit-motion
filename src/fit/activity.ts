@@ -1,4 +1,4 @@
-import type { FitLap, FitRecord, FitSession, ParsedFit } from './types';
+import type { FitLap, FitRecord, FitSession, ParsedFit, TripInfo } from './types';
 
 export interface RoutePoint {
   lat: number;
@@ -67,6 +67,8 @@ export interface Activity {
   maxHrPoint?: RoutePoint;
   maxSpeedPoint?: RoutePoint;
   maxAltitudePoint?: RoutePoint;
+  /** 合并行程的分段信息（多日行程 / 同路线多刷）；普通记录没有 */
+  trip?: TripInfo;
 }
 
 const SPORTS: Record<number, { name: string; key: Activity['sportKey'] }> = {
@@ -413,6 +415,7 @@ export function buildActivity(parsed: ParsedFit, fileName: string): Activity {
     maxHrPoint,
     maxSpeedPoint,
     maxAltitudePoint,
+    trip: parsed.trip,
   };
 }
 

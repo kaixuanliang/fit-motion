@@ -129,13 +129,17 @@ function packTrack(activity: Activity, id: string, session: StoredSession): Stor
     hasTimestamps: activity.timeAvailable && count > 0 && t[count - 1] > t[0],
     sportHint: activity.sport,
     session,
+    trip: activity.trip,
   };
 }
 
 function sessionOf(activity: Activity): StoredSession {
   return {
     startTime: activity.startTime,
-    elapsedTime: activity.durationSec,
+    // 必须是 elapsed（含停留与跨天间隔），不是运动时长：重载时 buildActivity
+    // 用 start + max(elapsed, timer) 当裁点窗口，写成运动时长会把有停留的记录
+    // 尾部、以及跨天的合并行程整段裁掉。
+    elapsedTime: activity.elapsedSec,
     timerTime: activity.durationSec,
     distance: activity.distanceM,
     calories: activity.calories,
@@ -153,26 +157,31 @@ function sessionOf(activity: Activity): StoredSession {
 function metaOf(activity: Activity, source: { id: string; fileHash: string; src: SourceKind; fileName: string; size: number; name?: string; mergedFrom?: string[] }): ActivityMeta {
   const lat = activity.points.map((point) => point.lat);
   const lon = activity.points.map((point) => point.lon);
+  // 合并行程：列表统计按「真实总量」走（含重复路线的里程/时长与聚合极值），
+  // 而 activity 本身只承载实际绘制的那一遍，供进度与视频使用。
+  const trip = activity.trip;
+  const distance = trip?.totalMeters ?? activity.distanceM;
+  const duration = trip?.totalMovingSec ?? activity.durationSec;
   return {
     id: source.id,
     name: source.name ?? nameFor(activity),
     src: source.src,
     fileName: source.fileName,
     start: activity.startTime,
-    duration: activity.durationSec,
-    distance: activity.distanceM,
+    duration,
+    distance,
     avgSpeed: activity.avgSpeed,
-    maxSpeed: activity.maxSpeed,
+    maxSpeed: trip?.best.maxSpeed ?? activity.maxSpeed,
     sport: activity.sport,
     avgHr: activity.avgHeartRate ?? null,
-    maxHr: activity.maxHeartRate ?? null,
-    climb: activity.ascent ?? 0,
-    maxAlt: activity.maxAltitude ?? null,
+    maxHr: trip?.best.maxHeartRate ?? activity.maxHeartRate ?? null,
+    climb: trip?.best.ascent ?? activity.ascent ?? 0,
+    maxAlt: trip?.best.maxAltitude ?? activity.maxAltitude ?? null,
     calories: activity.calories ?? null,
     points: activity.points.length,
     thumb: thumbPath(lat, lon),
     fileHash: source.fileHash,
-    fp: motionFp(activity.startTime, activity.durationSec, activity.distanceM),
+    fp: motionFp(activity.startTime, duration, distance),
     backup: 0,
     added: Date.now(),
     updated: Date.now(),
@@ -568,6 +577,7 @@ export async function loadActivity(id: string): Promise<Activity> {
     records: unpackRecords(track),
     sessions: [track.session],
     laps: [],
+    trip: track.trip,
   };
   const activity = buildActivity(parsed, meta.fileName);
   // 旧口径迁移：均速曾是「距离÷总耗时」，打开记录时用新口径（距离÷运动时长）
