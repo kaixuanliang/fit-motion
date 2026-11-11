@@ -216,24 +216,34 @@ async function fetchVectorTile(z: number, x: number, y: number): Promise<ArrayBu
   const template = await tileTemplate();
   if (!template) return null;
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return null;
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), 12_000);
-  try {
-    const response = await fetch(expandTemplate(template, z, x, y), {
-      mode: 'cors',
-      cache: 'force-cache',
-      signal: controller.signal,
-    });
-    if (!response.ok) return null;
-    const data = await response.arrayBuffer();
-    if (!data.byteLength) return null;
-    await writeBlob(key, data);
-    return data;
-  } catch {
-    return null;
-  } finally {
-    window.clearTimeout(timer);
+  // 失败重试两次（退避 300ms/800ms）：路线图上一张瓦片抓取失败就是一块
+  // 永久空白，而单次失败多半是移动网络抖动或服务端瞬时限流。
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 12_000);
+    try {
+      const response = await fetch(expandTemplate(template, z, x, y), {
+        mode: 'cors',
+        cache: 'force-cache',
+        signal: controller.signal,
+      });
+      if (response.ok) {
+        const data = await response.arrayBuffer();
+        if (data.byteLength) {
+          await writeBlob(key, data);
+          return data;
+        }
+      }
+    } catch {
+      // 网络异常，走重试
+    } finally {
+      window.clearTimeout(timer);
+    }
+    if (attempt < 2) {
+      await new Promise((resolve) => { setTimeout(resolve, attempt === 0 ? 300 : 800); });
+    }
   }
+  return null;
 }
 
 function tileCoords(lat: number, lon: number): { x: number; y: number } {
@@ -1567,6 +1577,14 @@ export class OverviewVectorLayer {
   private failed = 0;
   private loaded = 0;
   private wanted = 0;
+  /** 预取失败的瓦片 key（诊断用：定位路线图上的缺块） */
+  private failedKeys: string[] = [];
+  /** 最近一次 prefetch 的相机与瓦片范围（诊断用） */
+  private lastPrefetchBox: {
+    camera: { x: number; y: number; scale: number };
+    box: { x0: number; x1: number; y0: number; y1: number };
+    tileBase: number;
+  } | null = null;
 
   constructor(theme: VideoTheme, base: TrackMap) {
     this.theme = theme;
@@ -1575,11 +1593,20 @@ export class OverviewVectorLayer {
     // near 1700 px so the poster is neither a web of lanes nor a blank sheet.
     const bounds = base.routeBounds;
     const span = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY, 1);
+    const camera = this.coverCamera();
     let zoom = Math.min(14, base.zoom);
     while (zoom > 8 && span * 2 ** (zoom - base.zoom) > 1700) zoom -= 1;
+    let tileBase = TILE_SIZE * 2 ** (base.zoom - zoom);
+    // 长路线整幅取景把路线缩得很小，瓦片在屏幕上不到 150px——每张瓦片原生
+    // 256px 的细节只用了一半。继续降级直到接近 1:1，每降一级瓦片数少 4 倍，
+    // 预取/解码/位图预热全线提速（673km 实测：z8·361 张 23s → z7·约百张），
+    // 同时单张瓦片的原生细节反而更足（下载失败造成的缺块概率也随之下降）。
+    while (zoom > 5 && tileBase * camera.scale < 150) {
+      zoom -= 1;
+      tileBase = TILE_SIZE * 2 ** (base.zoom - zoom);
+    }
     this.zoom = zoom;
-    /** Map pixels one overview tile covers, expressed in base-zoom coordinates. */
-    this.tileBase = TILE_SIZE * 2 ** (base.zoom - zoom);
+    this.tileBase = tileBase;
   }
 
   private readonly tileBase: number;
@@ -1595,6 +1622,16 @@ export class OverviewVectorLayer {
 
   get failedTiles(): number {
     return this.failed;
+  }
+
+  /** 预取失败/解析失败的瓦片 key，与 wanted 对比可定位缺块在哪一格 */
+  get missingKeys(): string[] {
+    return this.failedKeys.slice();
+  }
+
+  /** 最近一次 prefetch 的相机与瓦片范围（诊断用：对比可视区算冗余） */
+  get lastPrefetch(): { camera: { x: number; y: number; scale: number }; box: { x0: number; x1: number; y0: number; y1: number }; tileBase: number } | null {
+    return this.lastPrefetchBox;
   }
 
   get tileCount(): number {
@@ -1636,6 +1673,7 @@ export class OverviewVectorLayer {
     // 宽度按创作页满宽预览的延展区加宽（核心 9:16 两侧还要延伸地图），
     // 否则延展区两侧超出预取范围，封面/成绩卡段两侧补不上地图
     const box = this.range(camera, 1080 * 1.8, 1920);
+    this.lastPrefetchBox = { camera, box: { ...box }, tileBase: this.tileBase };
     const keys: string[] = [];
     for (let x = box.x0 - 1; x <= box.x1 + 1; x += 1) {
       for (let y = box.y0 - 1; y <= box.y1 + 1; y += 1) {
@@ -1645,6 +1683,7 @@ export class OverviewVectorLayer {
     this.wanted = keys.length;
     this.loaded = 0;
     this.failed = 0;
+    this.failedKeys = [];
     // 冷路径批量预读 IDB，已缓存瓦片跳过逐条事务
     await readBlobsBatch(keys);
     let cursor = 0;
@@ -1672,6 +1711,7 @@ export class OverviewVectorLayer {
           this.tiles.set(key, parsed);
         } else {
           this.failed += 1;
+          this.failedKeys.push(key);
           if (this.failed >= 10) abort = true;
         }
         this.loaded += 1;

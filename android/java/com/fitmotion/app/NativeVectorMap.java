@@ -383,13 +383,25 @@ final class NativeVectorMap {
                         String[] parts = key.split("/");
                         String url = template.replace("{z}", parts[0])
                                 .replace("{x}", parts[1]).replace("{y}", parts[2]);
-                        HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
-                        connection.setConnectTimeout(8_000);
-                        connection.setReadTimeout(8_000);
-                        connection.setRequestProperty("User-Agent", "FitMotion/1.0");
-                        byte[] bytes = readBytes(connection.getInputStream());
-                        writeTileCache(key, bytes);
-                        return new Object[]{key, bytes};
+                        // 失败重试两次（退避 300ms/800ms）：一张瓦片失败就是
+                        // 成片上一块永久空白，而单次失败多半是网络抖动或
+                        // 服务端瞬时限流。
+                        Exception last = null;
+                        for (int attempt = 0; attempt < 3; attempt += 1) {
+                            try {
+                                HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
+                                connection.setConnectTimeout(8_000);
+                                connection.setReadTimeout(8_000);
+                                connection.setRequestProperty("User-Agent", "FitMotion/1.0");
+                                byte[] bytes = readBytes(connection.getInputStream());
+                                writeTileCache(key, bytes);
+                                return new Object[]{key, bytes};
+                            } catch (Exception error) {
+                                last = error;
+                                if (attempt < 2) Thread.sleep(attempt == 0 ? 300 : 800);
+                            }
+                        }
+                        throw last != null ? last : new Exception("tile fetch failed");
                     } catch (Exception ignored) {
                         return null;
                     }

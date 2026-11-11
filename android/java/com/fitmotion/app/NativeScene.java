@@ -2820,33 +2820,44 @@ final class NativeRenderJob {
     /**
      * Picks the tile zoom whose route bounding box lands near 1700 px, the same
      * rule the Canvas renderer uses, so the cover and result shots stay sharp
-     * without fetching thousands of high-zoom tiles.
+     * without fetching thousands of high-zoom tiles. Very long routes then drop
+     * further until a tile covers ~its on-screen footprint (≥150 px): every
+     * level down quarters the tile count, so a 673 km route goes from a few
+     * hundred z8 tiles to about a hundred z7 ones — same picture, 4× faster.
      */
     static int overviewZoom(JSONObject payload) {
         JSONArray points = payload.optJSONArray("points");
         int zoom = NativeVectorMap.FOLLOW_ZOOM;
-        while (zoom > 8) {
-            double minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
-            boolean any = false;
-            if (points != null) {
-                for (int i = 0; i < points.length(); i += Math.max(1, points.length() / 400)) {
-                    try {
-                        JSONArray point = points.getJSONArray(i);
-                        double lat = point.getDouble(0);
-                        double lon = point.getDouble(1);
-                        minLat = Math.min(minLat, lat); maxLat = Math.max(maxLat, lat);
-                        minLon = Math.min(minLon, lon); maxLon = Math.max(maxLon, lon);
-                        any = true;
-                    } catch (Exception ignored) { }
-                }
+        double spanAtZoom = 0;
+        double world = (double) NativeVectorMap.TILE * (1 << zoom);
+        double minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
+        boolean any = false;
+        if (points != null) {
+            for (int i = 0; i < points.length(); i += Math.max(1, points.length() / 400)) {
+                try {
+                    JSONArray point = points.getJSONArray(i);
+                    double lat = point.getDouble(0);
+                    double lon = point.getDouble(1);
+                    minLat = Math.min(minLat, lat); maxLat = Math.max(maxLat, lat);
+                    minLon = Math.min(minLon, lon); maxLon = Math.max(maxLon, lon);
+                    any = true;
+                } catch (Exception ignored) { }
             }
-            if (!any) return zoom;
-            double scale = NativeVectorMap.TILE * (double) (1 << zoom);
-            double x0 = (minLon + 180.0) / 360.0 * scale;
-            double x1 = (maxLon + 180.0) / 360.0 * scale;
-            double y0 = (1.0 - Math.log(Math.tan(Math.PI / 4.0 + Math.toRadians(maxLat) / 2.0)) / Math.PI) / 2.0 * scale;
-            double y1 = (1.0 - Math.log(Math.tan(Math.PI / 4.0 + Math.toRadians(minLat) / 2.0)) / Math.PI) / 2.0 * scale;
-            if (Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)) <= 1700) return zoom;
+        }
+        if (!any) return zoom;
+        double x0 = (minLon + 180.0) / 360.0 * world;
+        double x1 = (maxLon + 180.0) / 360.0 * world;
+        double y0 = (1.0 - Math.log(Math.tan(Math.PI / 4.0 + Math.toRadians(maxLat) / 2.0)) / Math.PI) / 2.0 * world;
+        double y1 = (1.0 - Math.log(Math.tan(Math.PI / 4.0 + Math.toRadians(minLat) / 2.0)) / Math.PI) / 2.0 * world;
+        spanAtZoom = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0));
+        while (zoom > 8 && spanAtZoom * Math.pow(2, zoom - NativeVectorMap.FOLLOW_ZOOM) > 1700) zoom -= 1;
+        // 整幅取景下的 fit 比例（与 NativeRouteScene.fitScale 同式），再按
+        // 「单张瓦片在屏幕上的尺寸」降级，直到 ≥150px（≈原生 256px 的一半）。
+        double routeW = Math.max(1.0, Math.abs(x1 - x0));
+        double routeH = Math.max(1.0, Math.abs(y1 - y0));
+        double fitScale = Math.min(930.0 / routeW, 660.0 / routeH);
+        while (zoom > 5
+                && NativeVectorMap.TILE * fitScale * Math.pow(2, NativeVectorMap.FOLLOW_ZOOM - zoom) < 150) {
             zoom -= 1;
         }
         return zoom;

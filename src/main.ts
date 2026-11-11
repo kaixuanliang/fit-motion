@@ -890,19 +890,25 @@ async function prepareStudio(
       showCacheProgress('正在缓存地图瓦片', 0);
       // 三个抓取任务相互独立（栅格底图 / 矢量总览 / 第一视角瓦片），全部并行。
       // 旧的串行写法把每段的耗时加在一起，并行后总耗时 ≈ 最慢的一段。
-      // 全局视角不抓第一视角瓦片：它只用总览层（这也是 >300km 可行的原因）。
+      // 全局视角不抓第一视角瓦片，也不抓栅格底图：它全程只画总览层
+      // （栅格只作总览失败时的兜底，用的是构造时画好的艺术底图），
+      // 少一路下载还能把带宽让给总览瓦片。
       const ratios = { raster: 0, overview: 0, follow: 0 };
       const reportFetch = (label: string): void => {
         const combined = viewMode === 'follow'
           ? ratios.follow * 0.5 + ratios.overview * 0.3 + ratios.raster * 0.2
-          : ratios.overview * 0.6 + ratios.raster * 0.4;
+          : viewMode === 'global'
+            ? ratios.overview
+            : ratios.overview * 0.6 + ratios.raster * 0.4;
         showCacheProgress(label, combined * 0.85);
       };
-      const rasterTask = map.loadTiles((progress) => {
-        if (token !== studioToken) return;
-        ratios.raster = progress;
-        reportFetch('正在缓存地图瓦片');
-      }).then(() => cacheMark('raster-done'));
+      const rasterTask = viewMode === 'global'
+        ? Promise.resolve().then(() => cacheMark('raster-skipped'))
+        : map.loadTiles((progress) => {
+          if (token !== studioToken) return;
+          ratios.raster = progress;
+          reportFetch('正在缓存地图瓦片');
+        }).then(() => cacheMark('raster-done'));
       // The vector overview is what the cover/result frames actually paint.
       const overviewTask = (overview
         ? overview.prefetch((done, total) => {
