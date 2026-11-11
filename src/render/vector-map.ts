@@ -2,6 +2,8 @@ import { VectorTile } from '@mapbox/vector-tile';
 import Pbf from 'pbf';
 import type { Activity } from '../fit/activity';
 import { project, TILE_SIZE } from '../geo';
+import { paintFollowTile, paintOverviewTile, BITMAP_PAD, type ThemeMapColors, type TilePoint } from './tile-painter';
+import { paintTileOffThread, rasterOffThreadSupported } from './tile-raster';
 import type { MapCamera, TrackMap } from './map';
 import type { VideoTheme } from './theme';
 
@@ -30,7 +32,7 @@ interface ParsedTile {
   extent: number;
 }
 
-type TilePoint = { x: number; y: number };
+// TilePoint 由 tile-painter 模块导出（本文件 import 使用）
 
 let dbPromise: Promise<IDBDatabase | null> | null = null;
 let templatePromise: Promise<string | null> | null = null;
@@ -324,12 +326,11 @@ function rgb(color: number[]): string {
  * keeps roads as real vector paths, so no raster road edge can be upscaled.
  */
 interface TileBitmap {
-  canvas: HTMLCanvasElement;
+  /** 光栅化产物：主线程回退时是 canvas，Worker 路径是转移回来的 ImageBitmap。 */
+  canvas: HTMLCanvasElement | ImageBitmap;
   size: number;
   pad: number;
 }
-
-const BITMAP_PAD = 8;
 /**
  * 瓦片位图缓存上限（Map 插入序 FIFO 淘汰）。旧值 64：视口 ~20 张 + 预热
  * 前方瓦片不断插入时，刚升级的全尺寸位图几帧内就被挤出、重新用兜底位图
@@ -934,6 +935,11 @@ export class VectorFollowLayer {
    * result is pixel-for-pixel what the vector path would paint, so caching it
    * costs no quality — only the repeated work of projecting and stroking a few
    * thousand features per frame.
+   *
+   * Worker 可用时改为「异步全尺寸 + 同步兜底」：本帧立刻返回一张主线程
+   * 现烤的 256px 兜底位图（成本约 1/3），同时把 pbf 解码 + 全尺寸绘制
+   * 派给 Worker，完成后下一帧自动替换升级。主线程每帧的光栅化成本
+   * 从「N 张 × 全尺寸」降到「N 张 × 兜底」。
    */
   private bitmapFor(parsed: ParsedTile, sizePx: number, key: string): TileBitmap {
     const size = Math.max(32, Math.round(sizePx));
@@ -949,6 +955,10 @@ export class VectorFollowLayer {
       this.bitmaps.set(key, shared);
       return shared;
     }
+    if (rasterOffThreadSupported()) {
+      this.requestWorkerRaster(parsed, key, size);
+      return this.hurryBitmapFor(parsed, key) ?? this.rasterizeTile(parsed, size);
+    }
     const entry = this.rasterizeTile(parsed, size);
     if (this.bitmaps.size >= BITMAP_CACHE_LIMIT) {
       const oldest = this.bitmaps.keys().next();
@@ -957,6 +967,35 @@ export class VectorFollowLayer {
     this.bitmaps.set(key, entry);
     sharedBitmapSet(this.theme.id, `${key}@${size}`, entry);
     return entry;
+  }
+
+  /** 已派发 Worker 的去重标记（key@size）：draw 循环 60fps 重复调用只派发一次。 */
+  private workerRasterQueued = new Set<string>();
+
+  private requestWorkerRaster(parsed: ParsedTile, key: string, size: number): void {
+    const mark = `${key}@${size}`;
+    if (this.workerRasterQueued.has(mark)) return;
+    this.workerRasterQueued.add(mark);
+    void this.runWorkerRaster(parsed, key, size, mark);
+  }
+
+  private async runWorkerRaster(parsed: ParsedTile, key: string, size: number, mark: string): Promise<void> {
+    try {
+      const [z, x, y] = key.split('/').map(Number);
+      const data = await fetchVectorTile(z, x, y);
+      if (!data) return;
+      const result = await paintTileOffThread(data, size, 'follow', this.theme.map, VECTOR_ZOOM);
+      if (!result) return;
+      const entry: TileBitmap = { canvas: result.bitmap, size, pad: BITMAP_PAD };
+      sharedBitmapSet(this.theme.id, mark, entry);
+      // 实例可能已被 clear()/重建：仅在还持有该 key 的占位时替换升级
+      if (this.bitmaps.has(key)) this.bitmaps.set(key, entry);
+      // 成功才解除去重标记（之后升尺寸还能再派发）；失败保留标记，
+      // 避免 draw 循环每帧对同一张坏瓦片反复派发
+      this.workerRasterQueued.delete(mark);
+    } catch {
+      // Worker 路径失败：兜底位图继续顶用，不影响绘制（标记保留不重试）
+    }
   }
 
   /**
@@ -1162,123 +1201,7 @@ export class VectorFollowLayer {
     viewW: number,
     viewH: number,
   ): void {
-    const unit = sizePx / parsed.extent;
-    const inView = (x: number, y: number): boolean => x > -16 && x < viewW + 16 && y > -16 && y < viewH + 16;
-
-    const fillPolygon = (feature: any, fill: string, alpha: number): void => {
-      const rings = feature.loadGeometry() as TilePoint[][];
-      const path = new Path2D();
-      let hasPoint = false;
-      for (const ring of rings) {
-        let started = false;
-        for (const point of ring) {
-          const x = point.x * unit;
-          const y = point.y * unit;
-          if (!started) {
-            path.moveTo(x, y);
-            started = true;
-          } else {
-            path.lineTo(x, y);
-          }
-          hasPoint = true;
-        }
-        path.closePath();
-      }
-      if (!hasPoint) return;
-      target.globalAlpha = alpha;
-      target.fillStyle = fill;
-      target.fill(path, 'evenodd');
-      target.globalAlpha = 1;
-    };
-
-    const strokeLine = (feature: any, color: string, width: number): void => {
-      const geometry = feature.loadGeometry() as TilePoint[][];
-      for (const line of geometry) {
-        if (line.length < 2) continue;
-        target.beginPath();
-        let started = false;
-        let visibleLine = false;
-        for (const point of line) {
-          const x = point.x * unit;
-          const y = point.y * unit;
-          if (!started) {
-            target.moveTo(x, y);
-            started = true;
-          } else {
-            target.lineTo(x, y);
-          }
-          if (inView(x, y)) visibleLine = true;
-        }
-        if (!visibleLine) continue;
-        target.strokeStyle = color;
-        target.lineWidth = width;
-        target.lineCap = 'round';
-        target.lineJoin = 'round';
-        target.stroke();
-      }
-    };
-
-    const map = this.theme.map;
-    const layers = parsed.tile.layers as Record<string, any>;
-
-    // Polygons stay inside their own tile; a 1px bleed keeps edges seamless.
-    target.save();
-    target.beginPath();
-    target.rect(-1, -1, viewW + 2, viewH + 2);
-    target.clip();
-    for (const name of ['landcover', 'landuse', 'park', 'building', 'water']) {
-      const layer = layers[name];
-      if (!layer) continue;
-      const fill = name === 'water' ? rgb(map.water) : name === 'park' ? rgb(map.park) : rgb(map.building);
-      const alpha = name === 'landcover' ? 0.55 : 0.9;
-      for (let index = 0; index < layer.length; index += 1) {
-        const feature = layer.feature(index);
-        if (feature.type !== 3) continue;
-        fillPolygon(feature, fill, alpha);
-      }
-    }
-    target.restore();
-
-    const waterway = layers.waterway;
-    if (waterway) {
-      for (let index = 0; index < waterway.length; index += 1) {
-        const feature = waterway.feature(index);
-        if (feature.type === 2) strokeLine(feature, rgb(map.water), 3);
-      }
-    }
-
-    // Two-pass roads: casing under a crisp fill, mirroring the vector path.
-    const classes: Record<string, number> = {
-      motorway: 7,
-      trunk: 6.5,
-      primary: 5.5,
-      secondary: 4.5,
-      tertiary: 3.6,
-      minor: 2.8,
-      service: 1.7,
-      path: 1.2,
-      rail: 1.2,
-    };
-    const roads = layers.transportation;
-    if (!roads) return;
-    for (let index = 0; index < roads.length; index += 1) {
-      const feature = roads.feature(index);
-      if (feature.type !== 2) continue;
-      const className = String(feature.properties.class ?? 'minor');
-      const width = classes[className] ?? 1.5;
-      if (className === 'rail') {
-        strokeLine(feature, rgb(map.transit), width);
-        continue;
-      }
-      strokeLine(feature, rgb(map.roadEdge), width + 2.4);
-    }
-    for (let index = 0; index < roads.length; index += 1) {
-      const feature = roads.feature(index);
-      if (feature.type !== 2) continue;
-      const className = String(feature.properties.class ?? 'minor');
-      if (className === 'rail') continue;
-      strokeLine(feature, rgb(map.road), classes[className] ?? 1.5);
-    }
+    paintFollowTile(target, parsed.tile, parsed.extent, sizePx, viewW, viewH, this.theme.map);
   }
 
   drawFinalLabels(ctx: CanvasRenderingContext2D, camera: MapCamera, stageWidth: number, stageHeight: number): void {
@@ -1548,6 +1471,7 @@ export class VectorFollowLayer {
     this.bitmaps.clear();
     this.ambientBitmaps.clear();
     this.labelCandidates.clear();
+    this.workerRasterQueued.clear();
     this.primed = [];
     this.priming = null;
   }
@@ -1740,10 +1664,53 @@ export class OverviewVectorLayer {
     let done = 0;
     for (const key of keys) {
       const parsed = this.tiles.get(key);
-      if (parsed) this.bitmapFor(parsed, this.tileBase * scale, key);
+      // Worker 可用时逐张等待 Worker 产物（解码+绘制都在 Worker），
+      // 主线程只做一次 fetch（IDB/内存命中）和缓存插入
+      if (parsed) await this.bitmapForAsync(parsed, this.tileBase * scale, key);
       done += 1;
       onProgress?.(done, keys.length);
       await yieldIfBusy();
+    }
+  }
+
+  /**
+   * 单张总览位图的异步生产：Worker 可用走 Worker（等待完成 —— 末帧整帧
+   * 会被 posterCache 截走，绝不能拿着兜底位图交差）；否则回退主线程同步烤。
+   */
+  private async bitmapForAsync(parsed: ParsedTile, sizePx: number, key: string): Promise<void> {
+    const size = Math.max(128, Math.min(768, Math.round(sizePx)));
+    const cacheKey = `${key}@${size}`;
+    if (this.bitmaps.get(cacheKey) || sharedBitmapGet(this.theme.id, cacheKey)) return;
+    if (rasterOffThreadSupported()) {
+      const [z, x, y] = key.split('/').map(Number);
+      const data = await fetchVectorTile(z, x, y);
+      if (data) {
+        const result = await paintTileOffThread(data, size, 'overview', this.theme.map, this.zoom);
+        if (result) {
+          this.insertBitmap(cacheKey, { canvas: result.bitmap, size, pad: BITMAP_PAD });
+          return;
+        }
+      }
+    }
+    this.bitmapFor(parsed, sizePx, key);
+  }
+
+  /** 总览位图缓存插入（字节记账 + 预算淘汰 + 跨实例共享），bitmapFor/bitmapForAsync 共用。 */
+  private insertBitmap(cacheKey: string, entry: TileBitmap): void {
+    // 关键修复：位图缓存必须装得下全部瓦片。长路线的总览瓦片有数百张，
+    // 旧实现固定 128 条 + 插入序淘汰 —— 预热第 129 张就挤掉第 1 张，永远
+    // 热不满；播放时封面/成绩卡一帧要画全部瓦片，每帧数百张未命中 ×
+    // ~20ms 全量矢量重烤 = 单帧数秒，rAF 被饿死（表现为视频冻结、页面
+    // 卡死）。改为按字节预算淘汰：装满为止，超出预算才挤最旧的。
+    this.bitmapBytes += (entry.size + BITMAP_PAD * 2) ** 2 * 4;
+    this.bitmaps.set(cacheKey, entry);
+    sharedBitmapSet(this.theme.id, cacheKey, entry);
+    while (this.bitmapBytes > OVERVIEW_BITMAP_BUDGET && this.bitmaps.size > 1) {
+      const oldest = this.bitmaps.keys().next();
+      if (oldest.done) break;
+      const evicted = this.bitmaps.get(oldest.value);
+      this.bitmaps.delete(oldest.value);
+      if (evicted) this.bitmapBytes -= (evicted.size + BITMAP_PAD * 2) ** 2 * 4;
     }
   }
 
@@ -1767,21 +1734,7 @@ export class OverviewVectorLayer {
       this.paint(target, parsed, size, size + BITMAP_PAD * 2, size + BITMAP_PAD * 2);
     }
     const entry: TileBitmap = { canvas, size, pad: BITMAP_PAD };
-    // 关键修复：位图缓存必须装得下全部瓦片。长路线的总览瓦片有数百张，
-    // 旧实现固定 128 条 + 插入序淘汰 —— 预热第 129 张就挤掉第 1 张，永远
-    // 热不满；播放时封面/成绩卡一帧要画全部瓦片，每帧数百张未命中 ×
-    // ~20ms 全量矢量重烤 = 单帧数秒，rAF 被饿死（表现为视频冻结、页面
-    // 卡死）。改为按字节预算淘汰：装满为止，超出预算才挤最旧的。
-    this.bitmapBytes += (size + BITMAP_PAD * 2) ** 2 * 4;
-    this.bitmaps.set(cacheKey, entry);
-    sharedBitmapSet(this.theme.id, cacheKey, entry);
-    while (this.bitmapBytes > OVERVIEW_BITMAP_BUDGET && this.bitmaps.size > 1) {
-      const oldest = this.bitmaps.keys().next();
-      if (oldest.done) break;
-      const evicted = this.bitmaps.get(oldest.value);
-      this.bitmaps.delete(oldest.value);
-      if (evicted) this.bitmapBytes -= (evicted.size + BITMAP_PAD * 2) ** 2 * 4;
-    }
+    this.insertBitmap(cacheKey, entry);
     return entry;
   }
 
@@ -1793,192 +1746,7 @@ export class OverviewVectorLayer {
     viewW: number,
     viewH: number,
   ): void {
-    const unit = sizePx / parsed.extent;
-    // Road widths are authored against a 256 px tile, exactly like the native
-    // renderer. Scaling them by the raster/tile ratio keeps the stroke weight on
-    // screen constant instead of ballooning when a tile is rasterised large.
-    const widthScale = sizePx / 256;
-    const map = this.theme.map;
-    // 位图被压到 200px 出头时，一栋楼、一条支路在屏幕上不到 1px ——
-    // 画它们纯属浪费（每张瓦片要为此遍历上千个 feature）。这种尺寸直接
-    // 按稀疏模式画：只留水面、干道和高速，视觉上没有区别，解码量少一大半。
-    const sparse = this.zoom <= 11 || sizePx < 256;
-    const layers = parsed.tile.layers as Record<string, any>;
-    const inView = (x: number, y: number): boolean => x > -24 && x < viewW + 24 && y > -24 && y < viewH + 24;
-
-    const fillPolygon = (feature: any, fill: string, alpha: number): void => {
-      const rings = feature.loadGeometry() as TilePoint[][];
-      const path = new Path2D();
-      let any = false;
-      for (const ring of rings) {
-        let started = false;
-        for (const point of ring) {
-          const x = point.x * unit;
-          const y = point.y * unit;
-          if (!started) {
-            path.moveTo(x, y);
-            started = true;
-          } else {
-            path.lineTo(x, y);
-          }
-          any = true;
-        }
-        path.closePath();
-      }
-      if (!any) return;
-      target.globalAlpha = alpha;
-      target.fillStyle = fill;
-      target.fill(path, 'evenodd');
-      target.globalAlpha = 1;
-    };
-
-    const strokeGeometry = (geometry: TilePoint[][], color: string, width: number, alpha = 1): void => {
-      for (const line of geometry) {
-        if (line.length < 2) continue;
-        target.beginPath();
-        let started = false;
-        let visible = false;
-        for (const point of line) {
-          const x = point.x * unit;
-          const y = point.y * unit;
-          if (!started) {
-            target.moveTo(x, y);
-            started = true;
-          } else {
-            target.lineTo(x, y);
-          }
-          if (inView(x, y)) visible = true;
-        }
-        if (!visible) continue;
-        target.globalAlpha = alpha;
-        target.strokeStyle = color;
-        target.lineWidth = width;
-        target.lineCap = 'round';
-        target.lineJoin = 'round';
-        target.stroke();
-        target.globalAlpha = 1;
-      }
-    };
-    const strokeLine = (feature: any, color: string, width: number, alpha = 1): void =>
-      strokeGeometry(feature.loadGeometry() as TilePoint[][], color, width, alpha);
-
-    const parkTint = `rgb(${map.park[0]}, ${map.park[1]}, ${map.park[2]})`;
-    const builtTint = `rgb(${map.building[0]}, ${map.building[1]}, ${map.building[2]})`;
-
-    target.save();
-    target.beginPath();
-    target.rect(-1, -1, viewW + 2, viewH + 2);
-    target.clip();
-    // 小位图（总览预热常见 140px 上下）上，地块/土地利用只是一层几乎看不出的
-    // 色差，却要为此解码成千上万个多边形 —— 直接跳过，只留水面和公园。
-    const tinyRaster = sizePx < 256;
-    for (const name of ['landcover', 'landuse', 'park', 'water']) {
-      if (tinyRaster && (name === 'landcover' || name === 'landuse')) continue;
-      const layer = layers[name];
-      if (!layer) continue;
-      for (let index = 0; index < layer.length; index += 1) {
-        const feature = layer.feature(index);
-        if (feature.type !== 3) continue;
-        if (name === 'water') fillPolygon(feature, `rgb(${map.water[0]}, ${map.water[1]}, ${map.water[2]})`, 1);
-        else if (name === 'park') fillPolygon(feature, parkTint, 0.66);
-        else if (name === 'landcover') fillPolygon(feature, parkTint, 0.4);
-        else fillPolygon(feature, builtTint, 0.5);
-      }
-    }
-    if (!sparse && layers.building) {
-      const layer = layers.building;
-      for (let index = 0; index < layer.length; index += 1) {
-        const feature = layer.feature(index);
-        if (feature.type === 3) fillPolygon(feature, builtTint, 0.9);
-      }
-    }
-    target.restore();
-
-    const waterway = layers.waterway;
-    if (waterway) {
-      for (let index = 0; index < waterway.length; index += 1) {
-        const feature = waterway.feature(index);
-        if (feature.type === 2) {
-          strokeLine(feature, `rgb(${map.water[0]}, ${map.water[1]}, ${map.water[2]})`, (sparse ? 2.2 : 3) * widthScale);
-        }
-      }
-    }
-
-    const widthOf = (kind: string): number => {
-      if (kind === 'motorway') return 7;
-      if (kind === 'trunk') return 6.5;
-      if (kind === 'primary') return 5.5;
-      if (kind === 'secondary') return 4.5;
-      if (kind === 'tertiary') return 3.6;
-      if (kind === 'minor') return 2.8;
-      if (kind === 'service') return 1.7;
-      if (kind === 'path') return 1.2;
-      if (kind === 'rail') return 1.2;
-      return 1.5;
-    };
-    const colorOf = (kind: string): string => {
-      if (kind === 'motorway' || kind === 'trunk') return `rgb(${map.roadMajor[0]}, ${map.roadMajor[1]}, ${map.roadMajor[2]})`;
-      if (kind === 'primary') return `rgb(${map.roadPrimary[0]}, ${map.roadPrimary[1]}, ${map.roadPrimary[2]})`;
-      if (kind === 'secondary' || kind === 'tertiary') return `rgb(${map.road[0]}, ${map.road[1]}, ${map.road[2]})`;
-      if (kind === 'minor' || kind === 'service' || kind === 'path') {
-        return `rgb(${map.roadMinor[0]}, ${map.roadMinor[1]}, ${map.roadMinor[2]})`;
-      }
-      return `rgb(${map.road[0]}, ${map.road[1]}, ${map.road[2]})`;
-    };
-    const arterial = (kind: string): boolean =>
-      kind === 'motorway' || kind === 'trunk' || kind === 'primary' || kind === 'secondary';
-    const lane = (kind: string): boolean => kind === 'minor' || kind === 'service' || kind === 'path';
-    const roadAlpha = (kind: string): number =>
-      kind === 'motorway' || kind === 'trunk' ? 0.9 : kind === 'primary' ? 0.62 : 0.4;
-
-    const roads = layers.transportation;
-    if (roads) {
-      const edge = `rgb(${map.roadEdge[0]}, ${map.roadEdge[1]}, ${map.roadEdge[2]})`;
-      // 描边（pass 0）和路面（pass 1）必须分两轮画，否则后画的路面会盖掉
-      // 前一条路的描边。但两轮用的是同一份几何，第一次解码后留下来复用：
-      // loadGeometry() 每次调用都要重新解 pbf，是这层最贵的操作。
-      const geometry: Array<TilePoint[][] | undefined> = [];
-      for (let pass = 0; pass < 2; pass += 1) {
-        for (let index = 0; index < roads.length; index += 1) {
-          const feature = roads.feature(index);
-          if (feature.type !== 2) continue;
-          const kind = String(feature.properties.class ?? 'minor');
-          if (kind === 'rail') {
-            if (pass === 1) strokeLine(feature, `rgb(${map.transit[0]}, ${map.transit[1]}, ${map.transit[2]})`, 1.2 * widthScale);
-            continue;
-          }
-          if (pass === 0 && sparse && !arterial(kind)) continue;
-          if (pass === 1 && sparse && lane(kind)) continue;
-          let rings = geometry[index];
-          if (!rings) {
-            rings = feature.loadGeometry() as TilePoint[][];
-            geometry[index] = rings;
-          }
-          if (pass === 0) {
-            strokeGeometry(rings, edge, (widthOf(kind) + (sparse ? 1.4 : 2.4)) * widthScale, sparse ? 0.5 : 1);
-          } else {
-            const width = sparse ? widthOf(kind) * 0.8 : widthOf(kind);
-            strokeGeometry(rings, colorOf(kind), width * widthScale, sparse ? roadAlpha(kind) : 1);
-          }
-        }
-      }
-    }
-
-    // National roads (G refs) only carry their number in transportation_name, so
-    // restroke those geometries in the highway colour — the shield alone was not
-    // enough to read a 200 km ride at city scale.
-    const names = layers.transportation_name;
-    if (names) {
-      const national = `rgb(${map.national[0]}, ${map.national[1]}, ${map.national[2]})`;
-      for (let index = 0; index < names.length; index += 1) {
-        const feature = names.feature(index);
-        if (feature.type !== 2) continue;
-        const ref = String(feature.properties.ref ?? '').split(';')[0].trim();
-        if (!/^G\d{1,3}$/.test(ref)) continue;
-        const kind = String(feature.properties.class ?? 'primary');
-        strokeLine(feature, national, Math.max(widthOf(kind), sparse ? 4.4 : 5.2) * widthScale, sparse ? 0.85 : 1);
-      }
-    }
+    paintOverviewTile(target, parsed.tile, parsed.extent, sizePx, viewW, viewH, this.theme.map, this.zoom);
   }
 
   draw(ctx: CanvasRenderingContext2D, camera: MapCamera, stageWidth: number, stageHeight: number): boolean {

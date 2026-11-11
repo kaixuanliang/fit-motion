@@ -10,6 +10,13 @@ if (!fs.existsSync(exe)) {
   throw new Error('esbuild binary not found. Run npm install first.');
 }
 
+// 先把瓦片光栅化 Worker 打成内联字符串（tile-raster.ts import 生成的 .gen.ts）
+const workerBuild = spawnSync(process.execPath, [path.join(root, 'tools', 'build-worker.mjs')], {
+  stdio: 'inherit',
+  cwd: root,
+});
+if (workerBuild.status !== 0) process.exit(workerBuild.status ?? 1);
+
 fs.mkdirSync(dist, { recursive: true });
 fs.rmSync(path.join(dist, 'assets'), { recursive: true, force: true });
 for (const name of ['app.js', 'app.css', 'index.html', 'FitMotion.apk']) {

@@ -782,17 +782,18 @@ function applyStudioModeUi(): void {
   const exportButton = byId<HTMLButtonElement>('export-btn');
   const help = byId<HTMLElement>('export-help');
   const toggle = byId<HTMLButtonElement>('view-toggle');
-  toggle.hidden = viewLocked;
+  // >300km 不再隐藏切换按钮：默认全局视角，但保留「强制第一视角」覆盖入口
+  toggle.hidden = false;
   toggle.classList.toggle('on', viewMode === 'global');
   toggle.title = viewMode === 'global'
-    ? '当前：全局视角 · 点击切换第一视角'
+    ? (viewLocked ? '当前：全局视角（超过 300 公里的默认视角）· 点击强制第一视角' : '当前：全局视角 · 点击切换第一视角')
     : '当前：第一视角 · 点击切换全局视角';
   toggle.setAttribute('aria-label', toggle.title);
   if (viewMode === 'global') {
     device.textContent = '全局视角 · 1080P MP4';
     exportButton.innerHTML = '<svg><use href="#i-download"/></svg> 导出 1080P MP4';
     help.innerHTML = '1080 × 1920 · 30FPS · MP4 · 全局视角回放完整路线'
-      + (viewLocked ? '（超过 300 公里仅支持全局视角）' : '');
+      + (viewLocked ? '（超过 300 公里默认全局视角，可点击地球按钮强制第一视角）' : '');
   } else {
     device.textContent = `${activeTheme().label} · 1080P MP4`;
     exportButton.innerHTML = '<svg><use href="#i-download"/></svg> 导出 1080P MP4';
@@ -802,11 +803,53 @@ function applyStudioModeUi(): void {
 
 /** 切换视角：重建创作页（缓存会话按视角区分），播放头与播放状态尽量保留。 */
 function toggleViewMode(): void {
-  if (viewLocked || exporting) return;
+  if (exporting) return;
+  if (viewMode === 'global' && viewLocked) {
+    // >300km 覆盖入口：强制第一视角前明确告知成本
+    void confirmViewOverride().then((ok) => {
+      if (!ok) return;
+      viewMode = 'follow';
+      showToast('已切换到第一视角（超长路线，导出较慢）。');
+      if (currentActivity) rebuildStudioTheme();
+      else applyStudioModeUi();
+    });
+    return;
+  }
   viewMode = viewMode === 'global' ? 'follow' : 'global';
   showToast(viewMode === 'global' ? '已切换到全局视角。' : '已切换到第一视角。');
   if (currentActivity) rebuildStudioTheme();
   else applyStudioModeUi();
+}
+
+/** >300km 强制第一视角的确认弹窗（复用清除缓存的弹窗样式）。 */
+function confirmViewOverride(): Promise<boolean> {
+  const modal = byId<HTMLElement>('view-confirm-modal');
+  const cancel = byId<HTMLButtonElement>('view-confirm-cancel');
+  const confirm = byId<HTMLButtonElement>('view-confirm-ok');
+  modal.hidden = false;
+  confirm.focus();
+  return new Promise((resolve) => {
+    const finish = (value: boolean): void => {
+      modal.hidden = true;
+      cancel.removeEventListener('click', onCancel);
+      confirm.removeEventListener('click', onConfirm);
+      modal.removeEventListener('click', onBackdrop);
+      document.removeEventListener('keydown', onKey);
+      resolve(value);
+    };
+    const onCancel = (): void => finish(false);
+    const onConfirm = (): void => finish(true);
+    const onBackdrop = (event: MouseEvent): void => {
+      if (event.target === modal) finish(false);
+    };
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') finish(false);
+    };
+    cancel.addEventListener('click', onCancel);
+    confirm.addEventListener('click', onConfirm);
+    modal.addEventListener('click', onBackdrop);
+    document.addEventListener('keydown', onKey);
+  });
 }
 
 function setStudioBusy(busy: boolean): void {
