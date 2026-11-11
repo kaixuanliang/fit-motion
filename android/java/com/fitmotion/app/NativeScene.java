@@ -1033,30 +1033,50 @@ final class NativeRouteScene implements NativeScene {
 
         float total = Math.max(1f, cumulative[count - 1]);
 
-        // Walked trail: persist in world space so it never "snake-vanishes" behind
-        // the camera. Dim pass under the bright head ribbon (matches the TS preview).
-        if (endIndex >= 2) {
-            int walkedN = decimate(3.2f, endIndex);
-            if (walkedN >= 2) {
-                ribbonPass(decimX, decimY, decimT, walkedN, ROUTE_CORE * 0.67f, 0.35f, 0.75f, true);
+        // 全局视角：镜头全程钉在封面取景，观众一开始就该看到全貌 ——
+        // 整条路线先铺一层均匀暗色 ghost（单色、无分段渐变，避免细窄
+        // 半透明段叠出的颗粒感），走过段保持点亮（glow/case/core 与
+        // 成绩卡同款）。旧画法是「淡尾 + 更淡的细前路 + 亮头」，在固定
+        // 镜头下就是一条贴着地图爬的蛇。
+        if (globalView) {
+            int ghostN = decimate(3.2f, count - 1);
+            if (ghostN >= 2) {
+                ribbonPass(decimX, decimY, decimT, ghostN, ROUTE_CORE * 0.62f, 0.30f, 0.55f, false);
             }
-        }
+            if (endIndex >= 2) {
+                int walkedN = decimate(3.2f, endIndex);
+                if (walkedN >= 2) {
+                    ribbonPass(decimX, decimY, decimT, walkedN, ROUTE_GLOW, 0.13f, 1f, true);
+                    ribbonPass(decimX, decimY, decimT, walkedN, ROUTE_CASE, 0.94f, 0f, false);
+                    ribbonPass(decimX, decimY, decimT, walkedN, ROUTE_CORE, 1f, 1f, true);
+                }
+            }
+        } else {
+            // Walked trail: persist in world space so it never "snake-vanishes"
+            // behind the camera. Dim pass under the bright head ribbon.
+            if (endIndex >= 2) {
+                int walkedN = decimate(3.2f, endIndex);
+                if (walkedN >= 2) {
+                    ribbonPass(decimX, decimY, decimT, walkedN, ROUTE_CORE * 0.67f, 0.35f, 0.75f, true);
+                }
+            }
 
-        // Untravelled remainder: dim, no casing, no joints.
-        if (endIndex < count - 1) {
-            beginColorBatch();
-            for (int i = Math.max(1, endIndex + 1); i < count; i += 1) {
-                if (!segmentVisible(i)) continue;
-                routeColor(cumulative[i - 1] / total, tmpColor);
-                float r0 = tmpColor[0] * 0.55f;
-                float g0 = tmpColor[1] * 0.55f;
-                float b0 = tmpColor[2] * 0.55f;
-                routeColor(cumulative[i] / total, tmpColor);
-                addQuad(screenX[i - 1], screenY[i - 1], r0, g0, b0, screenX[i], screenY[i],
-                        tmpColor[0] * 0.55f, tmpColor[1] * 0.55f, tmpColor[2] * 0.55f,
-                        ROUTE_CORE * 0.31f, 0.32f);
+            // Untravelled remainder: dim, no casing, no joints.
+            if (endIndex < count - 1) {
+                beginColorBatch();
+                for (int i = Math.max(1, endIndex + 1); i < count; i += 1) {
+                    if (!segmentVisible(i)) continue;
+                    routeColor(cumulative[i - 1] / total, tmpColor);
+                    float r0 = tmpColor[0] * 0.55f;
+                    float g0 = tmpColor[1] * 0.55f;
+                    float b0 = tmpColor[2] * 0.55f;
+                    routeColor(cumulative[i] / total, tmpColor);
+                    addQuad(screenX[i - 1], screenY[i - 1], r0, g0, b0, screenX[i], screenY[i],
+                            tmpColor[0] * 0.55f, tmpColor[1] * 0.55f, tmpColor[2] * 0.55f,
+                            ROUTE_CORE * 0.31f, 0.32f);
+                }
+                endColorBatch();
             }
-            endColorBatch();
         }
 
         // Splice the interpolated head so the ribbon ends under the marker.

@@ -3,7 +3,7 @@
  *
  * 入口在记录页顶栏（records.ts）。数据由 src/stats/year-review.ts 聚合，
  * 这里只负责呈现与导出。卡片数量按数据自适应（没有常骑路线/最长单骑时
- * 跳过对应卡），翻页支持滑动、方向键和底部按钮。
+ * 跳过对应卡），翻页支持左右滑动和方向键。
  *
  * 视觉取「年度报告」质感：深夜底色 + 荧光绿主色，不跟随明暗主题 —— 这页
  * 是仪式感优先的内容页，固定配色反而稳定。
@@ -72,6 +72,10 @@ export async function openYearReview(preferredYear?: number): Promise<void> {
   go(0);
 }
 
+export function yearReviewOpen(): boolean {
+  return open;
+}
+
 export function closeYearReview(): void {
   if (!open) return;
   open = false;
@@ -98,7 +102,7 @@ function miniRouteSvg(sketch: Array<{ lat: number; lon: number }>): string {
     minLat = Math.min(minLat, p.lat); maxLat = Math.max(maxLat, p.lat);
     minLon = Math.min(minLon, p.lon); maxLon = Math.max(maxLon, p.lon);
   }
-  const W = 340; const H = 150; const padX = 22; const padY = 16;
+  const W = 340; const H = 190; const padX = 22; const padY = 20;
   const spanLat = Math.max(maxLat - minLat, 1e-6);
   const spanLon = Math.max(maxLon - minLon, 1e-6);
   const scale = Math.min((W - padX * 2) / spanLon, (H - padY * 2) / spanLat);
@@ -183,8 +187,8 @@ function buildCards(review: YearReview): string[] {
     </section>`);
   }
 
-  // 6 速度时刻（亮色卡）
-  cards.push(`<section class="yr-card light">${statCard('SPEED MOMENTS',
+  // 6 速度时刻（与其它卡统一深夜配色）
+  cards.push(`<section class="yr-card">${statCard('SPEED MOMENTS',
     `${review.maxSpeedKmh.toFixed(1)}<small>km/h</small>`,
     `年度最高速度 · ${fmtDate(review.maxSpeedAt)}`,
     [[`${review.bestAvgKmh.toFixed(1)}<i>km/h</i>`, '最快单次均速'], [review.maxHr != null ? `${review.maxHr}<i>bpm</i>` : '--', '年度最高心率']],
@@ -241,8 +245,6 @@ function renderDeck(review: YearReview): void {
   dots.innerHTML = cards.map(() => '<span class="yr-dot"></span>').join('');
   index = 0;
 
-  $('yr-prev').onclick = () => go(index - 1);
-  $('yr-next').onclick = () => go(index + 1);
   $('yr-close').onclick = closeYearReview;
   deck.querySelector('#yr-share-img')?.addEventListener('click', () => void exportYearImage(review));
   deck.querySelector('#yr-share-video')?.addEventListener('click', () => {
@@ -260,8 +262,6 @@ function go(next: number): void {
   });
   dots.forEach((dot, i) => dot.classList.toggle('on', i === next));
   index = next;
-  ($('yr-prev') as HTMLButtonElement).disabled = index === 0;
-  ($('yr-next') as HTMLButtonElement).disabled = index === cards.length - 1;
 }
 
 // 键盘翻页

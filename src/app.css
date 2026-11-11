@@ -155,6 +155,8 @@ body {
 }
 
 .pane-head .sum {
+  order: 2;
+  margin-left: auto;
   font-size: 11px;
   color: var(--dim);
   font-variant-numeric: tabular-nums;
@@ -3061,11 +3063,14 @@ html.gl-preview #stage-canvas {
 /* ── 年度骑行回顾（Wrapped 式全屏翻卡）────────────────────── */
 /* 这页是仪式感优先的内容页：固定深夜配色，不跟随明暗主题 */
 
+/* 记录页顶栏是 h1 + 年度回顾 + sum 三件套：把入口排到最右，
+   sum 靠 auto margin 收在它左边 —— 居中位置会被 Mate 30 Pro 这类
+   刘海屏挡住，右上角最稳。 */
 .pane-head .yr-entry {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  margin-left: auto;
+  order: 3;
   padding: 5px 12px;
   border-radius: 99px;
   border: 1px solid var(--accent-line);
@@ -3195,21 +3200,16 @@ html.gl-preview #stage-canvas {
   background: #d8ff3e;
 }
 .yr-eyebrow.center { justify-content: center; }
+/* 数据口径脚注：走文档流排在内容之后（原来是绝对定位贴底，
+   骑行天数等面板一高就互相压住）。 */
 .yr-src {
-  position: absolute;
-  left: 26px;
-  right: 26px;
-  bottom: 92px;
   font-size: 10.5px;
   color: rgba(216, 255, 62, 0.55);
   letter-spacing: 0.4px;
   border-top: 1px dashed rgba(216, 255, 62, 0.25);
   padding-top: 7px;
   line-height: 1.5;
-}
-.yr-card.light .yr-src {
-  color: rgba(23, 34, 43, 0.5);
-  border-color: rgba(23, 34, 43, 0.14);
+  margin-top: 12px;
 }
 
 .yr-cover { justify-content: center; align-items: center; text-align: center; gap: 6px; }
@@ -3280,18 +3280,6 @@ html.gl-preview #stage-canvas {
 .yr-stat .v { font-size: 25px; font-weight: 700; color: #fff; }
 .yr-stat .v i { font-style: normal; font-size: 12px; color: #e8b84a; margin-left: 2px; }
 .yr-stat .k { font-size: 11px; color: rgba(255, 255, 255, 0.5); margin-top: 4px; letter-spacing: 1px; }
-
-.yr-card.light { background: #f4f2e7; color: #17222b; }
-.yr-card.light .yr-eyebrow { color: #e0642f; }
-.yr-card.light .yr-eyebrow::before { background: #e0642f; }
-.yr-card.light .yr-big { color: #17222b; }
-.yr-card.light .yr-big small { color: #e0642f; }
-.yr-card.light .yr-cap { color: #5c6b72; }
-.yr-card.light .yr-stat {
-  background: rgba(23, 34, 43, 0.05);
-  border-color: rgba(23, 34, 43, 0.14);
-}
-.yr-card.light .yr-stat .v { color: #17222b; }
 
 .yr-bars {
   display: flex;
@@ -3483,23 +3471,12 @@ html.gl-preview #stage-canvas {
   height: 68px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   padding: 0 20px;
   background: linear-gradient(180deg, rgba(11, 15, 19, 0), rgba(11, 15, 19, 0.88) 40%);
   z-index: 10;
+  pointer-events: none;
 }
-.yr-step {
-  background: none;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  color: #fff;
-  border-radius: 99px;
-  padding: 8px 16px;
-  font-size: 12.5px;
-  font-family: inherit;
-  cursor: pointer;
-  letter-spacing: 1px;
-}
-.yr-step:disabled { opacity: 0.25; cursor: default; }
 .yr-dots { display: flex; gap: 6px; }
 .yr-dot {
   width: 6px;

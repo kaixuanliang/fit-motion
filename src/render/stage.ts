@@ -1268,15 +1268,29 @@ export class MotionStage {
     // GPS points every frame was the main cause of the low capture frame rate.
     const trailPoints = 720;
     const start = result || global ? 0 : Math.max(0, index - trailPoints);
-    const end = result
+    const end = result || global
       ? route.length - 1
-      : global
-        ? index
-        : Math.min(route.length - 1, index + Math.max(40, Math.floor(route.length * 0.012)));
+      : Math.min(route.length - 1, index + Math.max(40, Math.floor(route.length * 0.012)));
     const screen = route.slice(start, end + 1).map((point) => this.map.screenPoint(point, camera, WIDTH, HEIGHT));
     const localIndex = index - start;
 
-    if (localIndex < 1 && progress <= 0.001) {
+    // 全局视角：整条路线先铺一层均匀暗色 ghost（镜头不动，观众一开始就
+    // 看得到全貌）。亮线只是「点亮」走过的部分，而不是一条从起点往前爬
+    // 的蛇；ghost 用单色细线，避免分段渐变叠出的颗粒感。
+    if (global) {
+      ctx.save();
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = hexAlpha(this.c.route[1], 0.3);
+      ctx.lineWidth = 3.5;
+      ctx.beginPath();
+      ctx.moveTo(screen[0].x, screen[0].y);
+      for (let i = 1; i < screen.length; i += 1) ctx.lineTo(screen[i].x, screen[i].y);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    if (localIndex < 1 && (progress <= 0.001 || global)) {
       this.drawStartDot(ctx, screen[0]);
       return;
     }

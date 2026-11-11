@@ -16,6 +16,7 @@ import { MotionStage } from './render/stage';
 import { THEMES, isThemeId, type ThemeId } from './render/theme';
 import { bindTabbar, currentPane, showPane } from './ui/router';
 import { initRecords, type RecordsApi } from './ui/records';
+import { closeYearReview, yearReviewOpen } from './ui/year-review';
 import { initImport, type ImportApi } from './ui/import-page';
 import { initMerge, type MergeApi } from './ui/merge-page';
 import { initTrash, type TrashApi } from './ui/trash-page';
@@ -501,6 +502,11 @@ function bindEvents(): void {
     }
     // 记录页批量选择模式：返回键先退出多选，不退出页面
     if (records?.exitSelectingIfActive()) return true;
+    // 年度回顾是全屏覆盖页：返回键先退回记录页，不能直接退到桌面
+    if (yearReviewOpen()) {
+      closeYearReview();
+      return true;
+    }
     if (overlayIsOpen('merge-overlay')) {
       merger?.close();
       return true;

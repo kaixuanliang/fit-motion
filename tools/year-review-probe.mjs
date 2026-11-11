@@ -67,15 +67,16 @@ const shot = (name) => new Promise((resolve) => setTimeout(() => {
   page.screenshot({ path: `tools/downloads/yr-${name}.png` }).then(resolve);
 }, 450));
 
+const next = () => page.keyboard.press('ArrowRight');
 await shot('cover');
-await page.click('#yr-next'); await shot('distance');
-await page.click('#yr-next'); await shot('time');
-await page.click('#yr-next'); await shot('months');
-await page.click('#yr-next'); await shot('longest');
-await page.click('#yr-next'); await shot('speed');
-await page.click('#yr-next'); await shot('top');
-await page.click('#yr-next'); await shot('badge');
-await page.click('#yr-next'); await shot('end');
+await next(); await shot('distance');
+await next(); await shot('time');
+await next(); await shot('months');
+await next(); await shot('longest');
+await next(); await shot('speed');
+await next(); await shot('top');
+await next(); await shot('badge');
+await next(); await shot('end');
 
 // 成绩图：拦 toBlob 抓画布
 await page.evaluate(() => {
