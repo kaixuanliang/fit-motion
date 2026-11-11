@@ -36,6 +36,7 @@
       <symbol id="i-flame" viewBox="0 0 24 24"><path d="M12 3s-6 5-6 10a6 6 0 0 0 12 0c0-2-1-4-2.5-5.5-.3 1.5-1.2 2.4-2.5 2.5.8-2.3.3-5-1-7Z"/></symbol>
       <symbol id="i-share" viewBox="0 0 24 24"><circle cx="6" cy="12" r="2.5"/><circle cx="17" cy="5.5" r="2.5"/><circle cx="17" cy="18.5" r="2.5"/><path d="m8.3 10.8 6.4-4M8.3 13.2l6.4 4"/></symbol>
       <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14.2 14.2 0 0 1 0 18 14.2 14.2 0 0 1 0-18Z"/></symbol>
+      <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.9 5.3L19 10l-5.1 1.7L12 17l-1.9-5.3L5 10l5.1-1.7L12 3Z"/><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16Z"/></symbol>
     </svg>
 
     <div class="app" id="app" data-view="records">
@@ -46,6 +47,7 @@
           <div class="records-sticky" id="records-sticky">
             <div class="pane-head">
               <h1>记录</h1>
+              <span class="yr-entry" id="yr-entry-btn" role="button" tabindex="0" hidden><svg><use href="#i-spark"/></svg>年度回顾</span>
               <span class="sum" id="records-sum">—</span>
             </div>
             <div class="cat-bar" id="cat-bar">
@@ -486,6 +488,18 @@
 
     <button id="native-export-btn" hidden type="button">原生导出</button>
     <a id="browser-save-prompt" hidden>保存</a>
+
+    <div class="yr-overlay" id="year-review" hidden>
+      <div class="yr-screen" id="yr-screen">
+        <button class="yr-close" id="yr-close" type="button" aria-label="关闭年度回顾"><svg><use href="#i-back"/></svg></button>
+        <div class="yr-deck" id="yr-deck"></div>
+        <div class="yr-nav" id="yr-nav">
+          <button class="yr-step" id="yr-prev" type="button">← 上一张</button>
+          <div class="yr-dots" id="yr-dots"></div>
+          <button class="yr-step" id="yr-next" type="button">下一张 →</button>
+        </div>
+      </div>
+    </div>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

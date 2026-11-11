@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FIT MOTION · 年度骑行回顾 · 交互稿</title>
+<style>
+  :root {
+    --bg: #e9e7dc;
+    --card: #f4f2e7;
+    --ink: #17222b;
+    --dim: #5c6b72;
+    --accent: #e8b84a;
+    --accent-2: #d8ff3e;
+    --deep: #0f2a38;
+    --deep-2: #12384a;
+    --line: rgba(23, 34, 43, 0.14);
+    --danger: #e0642f;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    font-family: "Barlow Condensed", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    color: var(--ink);
+    display: flex; align-items: center; justify-content: center;
+    gap: 48px; padding: 24px; overflow: hidden;
+  }
+  /* ── 左侧说明栏 ── */
+  .notes { width: 330px; max-height: 88vh; overflow: auto; font-size: 13px; line-height: 1.75; color: var(--dim); }
+  .notes h1 { font-size: 22px; color: var(--ink); margin-bottom: 4px; letter-spacing: 0.5px; }
+  .notes .sub { font-size: 12px; letter-spacing: 2px; color: var(--accent); font-weight: 600; margin-bottom: 18px; }
+  .notes h2 { font-size: 14px; color: var(--ink); margin: 18px 0 6px; }
+  .notes ol { padding-left: 18px; }
+  .notes b { color: var(--ink); }
+  .notes .tip { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-top: 14px; }
+  @media (max-width: 980px) { .notes { display: none; } }
+
+  /* ── 手机框 ── */
+  .phone {
+    width: 400px; height: 830px; border-radius: 36px;
+    background: #0b0f13; padding: 10px; box-shadow: 0 30px 80px rgba(23,34,43,0.35);
+    position: relative; flex-shrink: 0;
+  }
+  .screen { width: 100%; height: 100%; border-radius: 28px; overflow: hidden; position: relative; background: var(--deep); }
+
+  /* ── 卡片栈 ── */
+  .deck { position: absolute; inset: 0; }
+  .card {
+    position: absolute; inset: 0; padding: 46px 26px 88px;
+    display: flex; flex-direction: column;
+    opacity: 0; transform: translateX(60px) scale(0.96); pointer-events: none;
+    transition: opacity .38s ease, transform .38s ease;
+    overflow: hidden;
+  }
+  .card.active { opacity: 1; transform: none; pointer-events: auto; }
+  .card.prev { opacity: 0; transform: translateX(-60px) scale(0.96); }
+  .eyebrow { font-size: 11px; letter-spacing: 3px; font-weight: 600; color: var(--accent-2); display: flex; align-items: center; gap: 8px; }
+  .eyebrow::before { content: ""; width: 18px; height: 2px; background: var(--accent-2); }
+  .src {
+    position: absolute; left: 26px; right: 26px; bottom: 74px;
+    font-size: 10.5px; color: rgba(216,255,62,0.55); letter-spacing: 0.4px;
+    border-top: 1px dashed rgba(216,255,62,0.25); padding-top: 7px; line-height: 1.5;
+  }
+  .light .src { color: rgba(23,34,43,0.5); border-color: var(--line); }
+
+  /* 封面 */
+  .cover { justify-content: center; align-items: center; text-align: center; gap: 6px;
+    background: radial-gradient(120% 90% at 50% 0%, var(--deep-2) 0%, var(--deep) 70%); }
+  .cover .year { font-size: 108px; font-weight: 700; letter-spacing: 2px; line-height: 1;
+    background: linear-gradient(180deg, #fff 20%, var(--accent-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .cover .t { font-size: 26px; font-weight: 600; color: #fff; letter-spacing: 8px; }
+  .cover .route-deco { margin-top: 26px; width: 240px; opacity: 0.9; }
+  .cover .hint { margin-top: 30px; font-size: 12px; color: rgba(255,255,255,0.45); letter-spacing: 2px; animation: pulse 1.8s infinite; }
+  @keyframes pulse { 0%,100% { opacity: .45 } 50% { opacity: .9 } }
+
+  /* 通用数字卡 */
+  .big { font-size: 84px; font-weight: 700; line-height: 1; color: #fff; margin-top: 18px; }
+  .big small { font-size: 22px; font-weight: 500; color: var(--accent-2); margin-left: 6px; }
+  .cap { font-size: 15px; color: rgba(255,255,255,0.65); margin-top: 8px; letter-spacing: 1px; }
+  .stat-row { display: flex; gap: 12px; margin-top: auto; margin-bottom: 56px; }
+  .stat { flex: 1; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); border-radius: 14px; padding: 14px 12px; }
+  .stat .v { font-size: 26px; font-weight: 700; color: #fff; }
+  .stat .v i { font-style: normal; font-size: 12px; color: var(--accent); margin-left: 2px; }
+  .stat .k { font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 4px; letter-spacing: 1px; }
+  .card.pad-b { padding-bottom: 130px; }
+
+  /* 亮色卡 */
+  .light { background: var(--card); color: var(--ink); }
+  .light .big { color: var(--ink); }
+  .light .big small { color: var(--danger); }
+  .light .cap { color: var(--dim); }
+  .light .eyebrow { color: var(--danger); }
+  .light .eyebrow::before { background: var(--danger); }
+
+  /* 月度柱状图 */
+  .bars { display: flex; align-items: flex-end; gap: 7px; height: 210px; margin: auto 0 10px; }
+  .bar { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 6px; height: 100%; }
+  .bar .col { width: 100%; border-radius: 6px 6px 3px 3px; background: rgba(216,255,62,0.22); position: relative; }
+  .bar.top .col { background: linear-gradient(180deg, var(--accent-2), #9ec22e); }
+  .bar .m { font-size: 10px; color: rgba(255,255,255,0.45); }
+  .bar.top .m { color: var(--accent-2); font-weight: 600; }
+  .bar .val { font-size: 9.5px; color: rgba(255,255,255,0.6); position: absolute; top: -16px; width: 100%; text-align: center; }
+
+  /* 迷你路线 */
+  .mini-route { margin: 18px 0 6px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; padding: 10px; position: relative; }
+  .mini-route svg { display: block; width: 100%; }
+  .mini-tag { position: absolute; top: 12px; left: 12px; font-size: 10px; letter-spacing: 1px; color: var(--accent-2);
+    background: rgba(15,42,56,0.7); padding: 3px 8px; border-radius: 99px; }
+
+  /* Top 路线列表 */
+  .top-list { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+  .top-item { display: flex; align-items: center; gap: 12px; background: rgba(255,255,255,0.055);
+    border: 1px solid rgba(255,255,255,0.1); border-radius: 14px; padding: 12px 14px; }
+  .top-item .rank { width: 30px; height: 30px; border-radius: 50%; background: var(--accent-2); color: var(--deep);
+    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px; flex-shrink: 0; }
+  .top-item .info { flex: 1; min-width: 0; }
+  .top-item .name { font-size: 14.5px; color: #fff; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .top-item .meta { font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 3px; }
+  .top-item .times { font-size: 12px; color: var(--accent-2); font-weight: 600; flex-shrink: 0; }
+
+  /* 称号卡 */
+  .badge-card { align-items: center; text-align: center; justify-content: center;
+    background: radial-gradient(110% 80% at 50% 100%, #2a4a2f 0%, var(--deep) 65%); }
+  .badge { width: 150px; height: 150px; border-radius: 50%; margin-bottom: 22px;
+    background: conic-gradient(from 0deg, var(--accent), var(--accent-2), var(--accent));
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 60px rgba(216,255,62,0.35); animation: spin 24s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .badge .inner { width: 118px; height: 118px; border-radius: 50%; background: var(--deep);
+    display: flex; align-items: center; justify-content: center; font-size: 52px; animation: spin 24s linear infinite reverse; }
+  .title-name { font-size: 34px; font-weight: 700; color: var(--accent-2); letter-spacing: 4px; }
+  .title-desc { font-size: 13px; color: rgba(255,255,255,0.6); margin-top: 10px; line-height: 1.7; }
+
+  /* 结尾卡 */
+  .end-card { justify-content: flex-end; gap: 12px; background:
+    radial-gradient(120% 80% at 20% 0%, var(--deep-2) 0%, var(--deep) 60%); }
+  .end-cta { display: flex; flex-direction: column; gap: 12px; margin-bottom: 40px; }
+  .cta { display: flex; align-items: center; gap: 14px; border-radius: 16px; padding: 16px 18px; cursor: pointer;
+    border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); transition: transform .15s; }
+  .cta:active { transform: scale(0.98); }
+  .cta.primary { background: var(--accent-2); border: none; }
+  .cta .ic { font-size: 24px; }
+  .cta .t1 { font-size: 16px; font-weight: 700; color: #fff; }
+  .cta.primary .t1 { color: var(--deep); }
+  .cta .t2 { font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 2px; }
+  .cta.primary .t2 { color: rgba(15,42,56,0.6); }
+
+  /* ── 底部导航 ── */
+  .nav { position: absolute; left: 0; right: 0; bottom: 0; height: 64px;
+    display: flex; align-items: center; justify-content: space-between; padding: 0 20px;
+    background: linear-gradient(180deg, rgba(11,15,19,0), rgba(11,15,19,0.88) 40%); z-index: 10; }
+  .nav button { background: none; border: 1px solid rgba(255,255,255,0.25); color: #fff; border-radius: 99px;
+    padding: 8px 18px; font-size: 13px; font-family: inherit; cursor: pointer; letter-spacing: 1px; }
+  .nav button:disabled { opacity: 0.25; cursor: default; }
+  .dots { display: flex; gap: 6px; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: rgba(255,255,255,0.25); transition: all .3s; }
+  .dot.on { width: 20px; border-radius: 4px; background: var(--accent-2); }
+  .skip { font-size: 11px; color: rgba(255,255,255,0.4); background: none; border: none; font-family: inherit; cursor: pointer; letter-spacing: 1px; }
+</style>
+</head>
+<body>
+
+<aside class="notes">
+  <h1>年度骑行回顾 · 交互稿</h1>
+  <div class="sub">YEAR IN MOTION · V1 DRAFT</div>
+  <p><b>形式</b>：类似「年度报告 / Wrapped」的逐卡叙事，从记录页或创作页入口进入，全屏播放式浏览。</p>
+  <h2>卡片结构（8 张）</h2>
+  <ol>
+    <li><b>封面</b> — 年份渐变大字 + 路线装饰，自动取当年数据</li>
+    <li><b>总里程</b> — 大数字 + 骑行天数 / 出行次数</li>
+    <li><b>时间与爬升</b> — 总时长、总爬升、最高海拔</li>
+    <li><b>月度分布</b> — 12 个月柱状图，最高月高亮</li>
+    <li><b>最长单骑</b> — 最远一次的里程 + 迷你路线缩略图（复用总览层绘制）</li>
+    <li><b>速度时刻</b> — 年度最高速度、最快单次均速</li>
+    <li><b>常骑路线</b> — Top 3（复用 sameRoute 去重聚合）</li>
+    <li><b>称号 + 出口</b> — 按数据授予称号；分享图 / 回顾视频两个出口</li>
+  </ol>
+  <h2>交互</h2>
+  <ol>
+    <li>左右滑动手势 / ← → 方向键 / 底部按钮翻卡</li>
+    <li>每卡底部小字标注<b>数据口径</b>（来自哪个字段，便于核对）</li>
+    <li>末卡双出口：<b>年度成绩图</b>（复用 stats-image 管线）与<b>年度回顾视频</b>（复用全局视角渲染线，把 12 个月路线串联渐进描绘）</li>
+  </ol>
+  <div class="tip">💡 本稿为静态示例数据。确认方向后：入口放记录页顶栏（「年度」按钮，仅当所选年份有数据时显示）；卡片文案与配色可再调。</div>
+</aside>
+
+<div class="phone">
+  <div class="screen" id="screen">
+    <div class="deck" id="deck">
+
+      <section class="card cover active">
+        <div class="eyebrow" style="justify-content:center">FIT MOTION · 年度回顾</div>
+        <div class="year">2026</div>
+        <div class="t">我的骑行年度</div>
+        <svg class="route-deco" viewBox="0 0 240 80">
+          <path d="M8 62 C 40 20, 70 70, 104 40 S 170 8, 200 34 S 228 58, 232 50"
+                fill="none" stroke="#d8ff3e" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="8" cy="62" r="4" fill="#fff"/>
+          <circle cx="232" cy="50" r="4" fill="#e8b84a"/>
+        </svg>
+        <div class="hint">上滑开始 ↕</div>
+      </section>
+
+      <section class="card">
+        <div class="eyebrow">TOTAL DISTANCE</div>
+        <div class="big">3,286<small>公里</small></div>
+        <div class="cap">相当于从北京骑到广州，再骑回石家庄</div>
+        <div class="stat-row pad-b">
+          <div class="stat"><div class="v">142<i>天</i></div><div class="k">骑行天数</div></div>
+          <div class="stat"><div class="v">186<i>次</i></div><div class="k">出行次数</div></div>
+          <div class="stat"><div class="v">23<i>km</i></div><div class="k">单次平均</div></div>
+        </div>
+        <div class="src">数据口径：Σ meta.distance（真实总里程，多日行程按整程计）· 天数按自然日去重</div>
+      </section>
+
+      <section class="card">
+        <div class="eyebrow">TIME & CLIMB</div>
+        <div class="big">117<small>小时</small></div>
+        <div class="cap">踩动踏板的时间 · 比追完 3 部长剧还长</div>
+        <div class="stat-row pad-b">
+          <div class="stat"><div class="v">18,420<i>m</i></div><div class="k">总爬升 ≈ 2 座泰山</div></div>
+          <div class="stat"><div class="v">1,286<i>m</i></div><div class="k">最高海拔</div></div>
+          <div class="stat"><div class="v">26.7<i>km/h</i></div><div class="k">年均速</div></div>
+        </div>
+        <div class="src">数据口径：Σ movingSec（运动时长，不含休息）· Σ ascent · max(maxAlt)</div>
+      </section>
+
+      <section class="card">
+        <div class="eyebrow">BY MONTH</div>
+        <div class="cap" style="margin-top:14px;font-size:17px;color:#fff">5 月是你的黄金月 —— <b style="color:#d8ff3e">618 公里</b></div>
+        <div class="bars" id="bars"></div>
+        <div class="cap" style="font-size:12px;color:rgba(255,255,255,0.4)">柱高 = 当月总里程</div>
+        <div class="src">数据口径：按 activity 开始时间的自然月聚合 Σ meta.distance</div>
+      </section>
+
+      <section class="card">
+        <div class="eyebrow">LONGEST RIDE</div>
+        <div class="big" style="font-size:64px">673<small>公里</small></div>
+        <div class="cap">9月19日 · 北京 → 郑州 · 跨 3 天</div>
+        <div class="mini-route">
+          <span class="mini-tag">迷你路线图 · 复用总览层</span>
+          <svg viewBox="0 0 340 120">
+            <path d="M20 18 C 60 30, 80 20, 110 34 S 160 66, 200 72 S 280 84, 318 100"
+                  fill="none" stroke="#d8ff3e" stroke-width="4" stroke-linecap="round"/>
+            <circle cx="20" cy="18" r="5" fill="#fff"/>
+            <circle cx="318" cy="100" r="5" fill="#e8b84a"/>
+            <circle cx="120" cy="38" r="3.5" fill="rgba(255,255,255,0.5)"/>
+            <circle cx="228" cy="76" r="3.5" fill="rgba(255,255,255,0.5)"/>
+          </svg>
+        </div>
+        <div class="stat-row" style="margin-bottom:0">
+          <div class="stat"><div class="v">56<i>小时</i></div><div class="k">全程跨度</div></div>
+          <div class="stat"><div class="v">27.6<i>h</i></div><div class="k">运动时长</div></div>
+          <div class="stat"><div class="v">3<i>天</i></div><div class="k">行程天数</div></div>
+        </div>
+        <div class="src">数据口径：max(meta.distance) 的那一次 · 多日行程显示 trip.legs 信息</div>
+      </section>
+
+      <section class="card light">
+        <div class="eyebrow">SPEED MOMENTS</div>
+        <div class="big" style="font-size:72px">52.4<small>km/h</small></div>
+        <div class="cap">年度最高速度 · 9月 · 西山下坡放坡</div>
+        <div class="stat-row pad-b">
+          <div class="stat" style="background:rgba(23,34,43,0.05);border-color:var(--line)">
+            <div class="v" style="color:var(--ink)">31.2<i>km/h</i></div><div class="k">最快单次均速</div></div>
+          <div class="stat" style="background:rgba(23,34,43,0.05);border-color:var(--line)">
+            <div class="v" style="color:var(--ink)">168<i>bpm</i></div><div class="k">年度最高心率</div></div>
+        </div>
+        <div class="src">数据口径：max(maxSpeedKmh) · max(display.avgSpeedKmh) · max(maxHr)</div>
+      </section>
+
+      <section class="card">
+        <div class="eyebrow">MOST RIDDEN</div>
+        <div class="cap" style="margin-top:12px;font-size:17px;color:#fff">你有 2 条路线反复刷了又刷</div>
+        <div class="top-list">
+          <div class="top-item">
+            <div class="rank">1</div>
+            <div class="info"><div class="name">奥森公园环线</div><div class="meta">共 214 km · 最快 24.6 km/h 均速</div></div>
+            <div class="times">×12 次</div>
+          </div>
+          <div class="top-item">
+            <div class="rank">2</div>
+            <div class="info"><div class="name">妙峰山爬坡</div><div class="meta">共 96 km · 最高海拔 1,286 m</div></div>
+            <div class="times">×4 次</div>
+          </div>
+          <div class="top-item">
+            <div class="rank">3</div>
+            <div class="info"><div class="name">通州大运河沿线</div><div class="meta">共 78 km</div></div>
+            <div class="times">×3 次</div>
+          </div>
+        </div>
+        <div class="cap" style="font-size:12px;color:rgba(255,255,255,0.4);margin-top:auto;margin-bottom:56px">重复路线识别 + 极值聚合复用 v1.1.23 的行程合并逻辑</div>
+        <div class="src">数据口径：sameRoute（双向覆盖率 ≥85%）聚合同名路线 · Σ 里程 / 次数 / best 极值</div>
+      </section>
+
+      <section class="card badge-card">
+        <div class="badge"><div class="inner">🚴</div></div>
+        <div class="title-name">长途远征者</div>
+        <div class="title-desc">年度里程突破 3,000 公里<br>并且完成了一次 500 公里以上的远征</div>
+        <div class="src">称号规则：按总里程 + 最长单骑 + 爬升分档授予（规则可配置）</div>
+      </section>
+
+      <section class="card end-card">
+        <div class="eyebrow">KEEP IT</div>
+        <div class="cap" style="font-size:20px;color:#fff;margin:16px 0 8px">把 2026 留下来</div>
+        <div class="end-cta">
+          <div class="cta primary">
+            <div class="ic">🖼️</div>
+            <div><div class="t1">生成年度成绩图</div><div class="t2">一张 1080×1920 分享图 · 复用成绩卡渲染</div></div>
+          </div>
+          <div class="cta">
+            <div class="ic">🎬</div>
+            <div><div class="t1">生成年度回顾视频</div><div class="t2">全局视角串联 12 个月路线 · 60~90 秒 MP4</div></div>
+          </div>
+          <div class="cta">
+            <div class="ic">↗️</div>
+            <div><div class="t1">保存 / 分享</div><div class="t2">系统分享面板</div></div>
+          </div>
+        </div>
+        <div class="src">出口：成绩图走 stats-image 管线 · 视频走 NativeScene 全局视角渲染线（新增月度分章脚本）</div>
+      </section>
+
+    </div>
+
+    <div class="nav">
+      <button id="prev">← 上一张</button>
+      <div class="dots" id="dots"></div>
+      <button id="next" class="skip">下一张 →</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const cards = [...document.querySelectorAll('.card')];
+  const dotsBox = document.getElementById('dots');
+  let index = 0;
+  cards.forEach((_, i) => {
+    const d = document.createElement('div');
+    d.className = 'dot' + (i === 0 ? ' on' : '');
+    dotsBox.appendChild(d);
+  });
+  const dots = [...dotsBox.children];
+
+  // 月度柱状图示例数据
+  const months = [86, 124, 210, 380, 618, 402, 265, 198, 476, 322, 145, 60];
+  const barsBox = document.getElementById('bars');
+  const max = Math.max(...months);
+  const topIdx = months.indexOf(max);
+  months.forEach((v, i) => {
+    const b = document.createElement('div');
+    b.className = 'bar' + (i === topIdx ? ' top' : '');
+    b.innerHTML = `<div class="col" style="height:${Math.max(4, v / max * 100)}%"><span class="val">${i === topIdx ? v : ''}</span></div><div class="m">${i + 1}月</div>`;
+    barsBox.appendChild(b);
+  });
+
+  function go(next) {
+    if (next < 0 || next >= cards.length) return;
+    cards[index].classList.remove('active');
+    cards[index].classList.toggle('prev', next > index);
+    index = next;
+    cards.forEach((c, i) => c.classList.toggle('prev', i < index));
+    cards[index].classList.add('active');
+    cards[index].classList.remove('prev');
+    dots.forEach((d, i) => d.classList.toggle('on', i === index));
+    document.getElementById('prev').disabled = index === 0;
+    document.getElementById('next').disabled = index === cards.length - 1;
+  }
+  document.getElementById('prev').onclick = () => go(index - 1);
+  document.getElementById('next').onclick = () => go(index + 1);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') go(index + 1);
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') go(index - 1);
+  });
+
+  // 触摸滑动
+  let sx = 0, sy = 0;
+  const screen = document.getElementById('screen');
+  screen.addEventListener('touchstart', (e) => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, { passive: true });
+  screen.addEventListener('touchend', (e) => {
+    const dx = e.changedTouches[0].clientX - sx;
+    const dy = e.changedTouches[0].clientY - sy;
+    if (Math.abs(dx) > 40 || Math.abs(dy) > 40) {
+      if (dx < 0 || dy < 0) go(index + 1); else go(index - 1);
+    }
+  }, { passive: true });
+
+  // 演示：点击 CTA 提示（真实实现里分别调 stats-image / 导出管线）
+  document.querySelectorAll('.cta').forEach((el) => {
+    el.addEventListener('click', () => {
+      const t = el.querySelector('.t1').textContent;
+      alert('【交互稿演示】此处将调用：' + t);
+    });
+  });
+</script>
+</body>
+</html>

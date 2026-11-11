@@ -15,6 +15,7 @@ import { PAGE_SIZE } from '../store/repo';
 import { SOURCE_LABEL, type ActivityMeta, type ListQuery, type SourceKind } from '../store/types';
 import { showActionSheet, showConfirm } from './dialog';
 import { showToastAction } from './toast';
+import { openYearReview, syncYearEntry } from './year-review';
 
 export type ExportFormat = 'gpx' | 'tcx';
 
@@ -257,6 +258,7 @@ async function refreshSummary(): Promise<void> {
   if (sum) sum.textContent = `${stats.count} 条 · ${fmtKm(stats.distanceM)} km`;
   const setTotal = $<HTMLElement>('set-total');
   if (setTotal) setTotal.textContent = `${stats.count} 条`;
+  syncYearEntry(stats.count > 0);
   renderChips(stats);
 }
 
@@ -466,6 +468,16 @@ export function initRecords(onOpen: OpenHandler, hooks: RecordsHooks = {}): Reco
   });
 
   $<HTMLButtonElement>('load-more')?.addEventListener('click', () => void loadNextPage());
+
+  // 年度回顾：优先当前筛选的年份，未筛选（全部）时取有数据的最新一年
+  $<HTMLElement>('yr-entry-btn')?.addEventListener('click', () => {
+    void openYearReview(state.year === 'all' ? undefined : state.year);
+  });
+  $<HTMLElement>('yr-entry-btn')?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    void openYearReview(state.year === 'all' ? undefined : state.year);
+  });
 
   $<HTMLElement>('records-pane')?.addEventListener('scroll', (event) => {
     const pane = event.currentTarget as HTMLElement;
