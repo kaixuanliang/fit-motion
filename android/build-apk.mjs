@@ -70,6 +70,7 @@ const javaSources = [
   path.join(android, 'java', 'com', 'fitmotion', 'app', 'MainActivity.java'),
   path.join(android, 'java', 'com', 'fitmotion', 'app', 'NativeExporter.java'),
   path.join(android, 'java', 'com', 'fitmotion', 'app', 'NativeScene.java'),
+  path.join(android, 'java', 'com', 'fitmotion', 'app', 'NativeCardScene.java'),
   path.join(android, 'java', 'com', 'fitmotion', 'app', 'ShareProvider.java'),
   path.join(android, 'java', 'com', 'fitmotion', 'app', 'NativePreview.java'),
   path.join(android, 'java', 'com', 'fitmotion', 'app', 'NativePreviewView.java'),

@@ -10,12 +10,13 @@ import {
   removeActivity, removeActivities,
   restoreActivity, restoreActivities,
   loadFileBlob,
+  type Stats,
 } from '../store/repo';
 import { PAGE_SIZE } from '../store/repo';
 import { SOURCE_LABEL, type ActivityMeta, type ListQuery, type SourceKind } from '../store/types';
 import { showActionSheet, showConfirm } from './dialog';
 import { showToastAction } from './toast';
-import { openYearReview, syncYearEntry } from './year-review';
+import { openYearReview } from './year-review';
 
 export type ExportFormat = 'gpx' | 'tcx';
 
@@ -167,6 +168,8 @@ function renderList(reset: boolean, appendCount = PAGE_SIZE): void {
   if (!list) return;
 
   list.classList.toggle('selecting', state.selecting);
+  // 批量选择时横幅让位，免得误触跑到年度回顾
+  document.getElementById('yr-banner')?.classList.toggle('gone', state.selecting);
   if (reset) list.innerHTML = state.items.map(cardHtml).join('');
   // 只追加真正新加载的那几条 —— 最后一页常常不足一页，按固定 20 条追加会把
   // 上一页的卡片原样再画一遍（重复卡片 + 顺序乱跳）
@@ -252,13 +255,41 @@ export async function loadNextPage(): Promise<void> {
   }
 }
 
+/**
+ * 年度回顾横幅：放在列表最上方而不是顶栏 —— 顶栏是工具区（筛选、统计），
+ * 年度回顾是内容入口，做成一张深色卡片，滚动时自然让位给记录列表。
+ * 数字全部来自 libraryStats 的 per-year 汇总，不额外查库。
+ */
+function renderYearBanner(stats: Stats): void {
+  const banner = document.getElementById('yr-banner') as HTMLButtonElement | null;
+  if (!banner) return;
+  const years = Object.keys(stats.byYear)
+    .filter((key) => (stats.byYear[key] ?? 0) > 0)
+    .sort();
+  const latest = years.length > 0 ? Number(years[years.length - 1]) : 0;
+  const year = state.year === 'all' ? latest : state.year;
+  const meters = stats.byYearM[String(year)] ?? 0;
+  const rides = stats.byYear[String(year)] ?? 0;
+  const days = stats.byYearDays[String(year)] ?? 0;
+  const show = year > 0 && rides > 0 && meters > 0;
+  banner.hidden = !show;
+  if (!show) return;
+  banner.dataset.year = String(year);
+  const yearEl = document.getElementById('yr-banner-year');
+  const kmEl = document.getElementById('yr-banner-km');
+  const metaEl = document.getElementById('yr-banner-meta');
+  if (yearEl) yearEl.textContent = String(year);
+  if (kmEl) kmEl.textContent = fmtKm(meters);
+  if (metaEl) metaEl.textContent = `${days} 天在车上 · ${rides} 次出发`;
+}
+
 async function refreshSummary(): Promise<void> {
   const stats = await libraryStats();
   const sum = $<HTMLSpanElement>('records-sum');
   if (sum) sum.textContent = `${stats.count} 条 · ${fmtKm(stats.distanceM)} km`;
   const setTotal = $<HTMLElement>('set-total');
   if (setTotal) setTotal.textContent = `${stats.count} 条`;
-  syncYearEntry(stats.count > 0);
+  renderYearBanner(stats);
   renderChips(stats);
 }
 
@@ -469,14 +500,10 @@ export function initRecords(onOpen: OpenHandler, hooks: RecordsHooks = {}): Reco
 
   $<HTMLButtonElement>('load-more')?.addEventListener('click', () => void loadNextPage());
 
-  // 年度回顾：优先当前筛选的年份，未筛选（全部）时取有数据的最新一年
-  $<HTMLElement>('yr-entry-btn')?.addEventListener('click', () => {
-    void openYearReview(state.year === 'all' ? undefined : state.year);
-  });
-  $<HTMLElement>('yr-entry-btn')?.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter' && event.key !== ' ') return;
-    event.preventDefault();
-    void openYearReview(state.year === 'all' ? undefined : state.year);
+  // 年度回顾：横幅卡上带着它自己的年份（跟随筛选，全部时取最新有数据的一年）
+  $<HTMLElement>('yr-banner')?.addEventListener('click', (event) => {
+    const year = Number((event.currentTarget as HTMLElement).dataset.year || 0);
+    void openYearReview(year > 0 ? year : undefined);
   });
 
   $<HTMLElement>('records-pane')?.addEventListener('scroll', (event) => {

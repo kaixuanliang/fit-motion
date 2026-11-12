@@ -2964,6 +2964,23 @@ final class NativeRenderJob {
             for (int c = 0; c < count; c += 1) {
                 if (cancelRequested) throw new java.io.IOException("导出已取消");
                 JSONObject chapter = chapters.getJSONObject(c);
+                // 数据卡幕：不需要地图瓦片，整帧 Canvas 直绘后上传纹理即可
+                if ("card".equals(chapter.optString("kind"))) {
+                    int cardFrames = Math.max(1,
+                            (int) Math.ceil(chapter.optDouble("durationSec", 4.0) * fps));
+                    progressPhase = "render";
+                    progressTotal.set(totalFramesAll);
+                    NativeCardScene card = new NativeCardScene(chapter, width, height, fps);
+                    for (int i = 0; i < cardFrames; i += 1) {
+                        if (cancelRequested) throw new java.io.IOException("导出已取消");
+                        progressDone.set(framesDone + i);
+                        encoder.encodeScene(card, i, cardFrames, ptsFrame + i);
+                    }
+                    framesDone += cardFrames;
+                    ptsFrame += cardFrames;
+                    card.release();
+                    continue;
+                }
                 chapter.put("globalView", true);
                 if (c < count - 1) chapter.put("noOutro", true);
                 long tilesStart = SystemClock.elapsedRealtime();

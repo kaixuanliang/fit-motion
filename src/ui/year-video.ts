@@ -1,15 +1,18 @@
 /**
- * 年度回顾视频：12 个月代表骑行串联成一条全局视角 MP4。
+ * 年度回顾视频：一条 40 秒左右的短片，不是逐月平铺的十二段循环。
  *
- * 数据来自 stats/year-review 的 monthChapters（每月取里程最大的一次骑行
- * 作代表，徽标展示当月次数与总里程）。渲染走原生 /render 的分章出口：
- * 顶层 payload 携带 chapters[]，Java 侧一个编码器会话逐章建场景 → 预光栅
- * → 编码 → 释放，PTS 全局连续，成片约 60~90 秒。
+ * 叙事结构（2026-11 重做）：
+ *   1. 片头数据卡（4.4s）：年份 + 总里程数字滚动 + 天数/次数 + 称号
+ *   2. 高光路线（最多 5 幕 × 5.6s）：全年最长 / 爬升最多 / 黄金月代表 /
+ *      最快一次 / 最后一骑 —— 每条都有"为什么剪它"的说法，而不是按月份
+ *      机械点名；全局视角渐进点亮，幕标就是这条路的说法
+ *   3. 片尾卡（8s）：12 个月柱状图逐月长出来 + 累计里程滚动 + 称号落版
  *
- * 这里只负责组织 payload 与进度 UI（复用导出浮层），渲染与混流全在原生层。
+ * 卡片幕走 Java 的 NativeCardScene（Canvas 直绘 + 纹理上传），路线幕复用
+ * 原来的 NativeRouteScene。一个编码器会话贯穿全片，PTS 全局连续。
  */
 
-import { monthChapters } from '../stats/year-review';
+import { computeYearReview, yearHighlights } from '../stats/year-review';
 import { loadActivity } from '../store/repo';
 import { formatDateParts, formatDuration, formatSpeedKmh } from '../fit/activity';
 import { THEMES } from '../render/theme';
@@ -19,11 +22,13 @@ import { showToast } from './toast';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
-/** 非末章时长：封面 1s + 入场 0.8s + 巡游 5s（Java 侧 COVER/INTRO 常量对齐）。 */
-const CHAPTER_SEC = 6.8;
-/** 末章在巡游之外多留 5s 给成绩卡收尾（Java OUTRO 4s + 余量）。 */
-const LAST_CHAPTER_SEC = 11.8;
-/** 每章轨迹抽稀上限：全局视角只有总览层在画，4000 点远超所需。 */
+/** 路线幕：封面 1s + 入场 0.8s + 巡游（Java 侧 COVER/INTRO 常量对齐）。 */
+const ROUTE_CHAPTER_SEC = 5.6;
+/** 片头数据卡：数字滚动 + 称号淡入，收得干净利落。 */
+const OPEN_CARD_SEC = 4.4;
+/** 片尾：12 根月度柱 + 累计里程 + 称号，留一点余韵。 */
+const CLOSE_CARD_SEC = 8.0;
+/** 每幕轨迹抽稀上限：全局视角只有总览层在画，4000 点远超所需。 */
 const CHAPTER_POINTS = 4000;
 
 let busy = false;
@@ -49,7 +54,7 @@ function exportBase(): string {
   }
 }
 
-interface ChapterPayload {
+interface RouteChapterPayload {
   durationSec: number;
   title: string;
   subtitle: string;
@@ -78,12 +83,49 @@ interface ChapterPayload {
   points: Array<[number, number]>;
 }
 
+interface CardChapterPayload {
+  kind: 'card';
+  /** opening：片头；closing：片尾月度节奏 + 称号 */
+  cardKind: 'opening' | 'closing';
+  durationSec: number;
+  year: number;
+  totalMeters: number;
+  rideDays: number;
+  rides: number;
+  climbM: number;
+  titleName: string;
+  titleDesc: string;
+  months: number[];
+}
+
+type ChapterPayload = RouteChapterPayload | CardChapterPayload;
+
 async function buildChapters(year: number): Promise<ChapterPayload[]> {
-  const chapters = await monthChapters(year);
-  const out: ChapterPayload[] = [];
+  const review = await computeYearReview(year);
+  if (!review) return [];
   const theme = THEMES.tech;
-  for (const chapter of chapters) {
-    const meta = chapter.meta;
+  const out: ChapterPayload[] = [];
+
+  // 1 片头数据卡
+  out.push({
+    kind: 'card',
+    cardKind: 'opening',
+    durationSec: OPEN_CARD_SEC,
+    year: review.year,
+    totalMeters: review.totalMeters,
+    rideDays: review.rideDays,
+    rides: review.rides,
+    climbM: review.climbM,
+    titleName: review.title.name,
+    titleDesc: review.title.desc.replace(/<br\s*\/?>/g, ' · '),
+    months: review.months,
+  });
+
+  // 2 高光路线
+  const highlights = await yearHighlights(year);
+  let order = 0;
+  for (const highlight of highlights) {
+    const meta = highlight.meta;
     let points: Array<[number, number]> = [];
     try {
       const activity = await loadActivity(meta.id);
@@ -93,17 +135,17 @@ async function buildChapters(year: number): Promise<ChapterPayload[]> {
         points.push([point.lat, point.lon]);
       }
     } catch {
-      // 轨迹已被清理：跳过这个月，徽标数据仍然有效
+      // 轨迹已被清理：跳过这一幕（数据卡照样成片）
       continue;
     }
     if (points.length < 2) continue;
+    order += 1;
     const date = formatDateParts(meta.start);
-    const km = (chapter.meters / 1000).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
     out.push({
-      durationSec: 0, // 末章在下面补
-      title: meta.name || `${chapter.month + 1}月骑行`,
+      durationSec: ROUTE_CHAPTER_SEC,
+      title: meta.name || highlight.label,
       subtitle: date.date,
-      place: meta.name || `${chapter.month + 1}月骑行`,
+      place: meta.name || highlight.label,
       startText: `开始 ${date.date.slice(5)}  ${date.time}`,
       distance: (meta.distance / 1000).toFixed(2),
       distanceMeters: meta.distance,
@@ -123,14 +165,27 @@ async function buildChapters(year: number): Promise<ChapterPayload[]> {
       moments: [],
       speedSeries: [],
       heartSeries: [],
-      chapterBadge: `${chapter.month + 1} 月`,
-      chapterBadgeSub: `${chapter.rides} 次出行 · ${km} 公里`,
+      chapterBadge: highlight.label,
+      chapterBadgeSub: highlight.note,
       points,
     });
   }
-  out.forEach((chapter, i) => {
-    chapter.durationSec = i === out.length - 1 ? LAST_CHAPTER_SEC : CHAPTER_SEC;
+
+  // 3 片尾数据卡（12 个月柱状图 + 称号）
+  out.push({
+    kind: 'card',
+    cardKind: 'closing',
+    durationSec: CLOSE_CARD_SEC,
+    year: review.year,
+    totalMeters: review.totalMeters,
+    rideDays: review.rideDays,
+    rides: review.rides,
+    climbM: review.climbM,
+    titleName: review.title.name,
+    titleDesc: review.title.desc.replace(/<br\s*\/?>/g, ' · '),
+    months: review.months,
   });
+
   return out;
 }
 
@@ -153,7 +208,7 @@ export async function exportYearReviewVideo(year: number): Promise<void> {
   if (ring) ring.style.display = '';
   if (eyebrow) eyebrow.style.display = '';
   if (title) title.textContent = `正在生成 ${year} 年度回顾视频`;
-  status.textContent = '正在统计 12 个月的代表骑行…';
+  status.textContent = '正在挑选年度高光…';
   status.style.display = '';
   fill.style.width = '0%';
   if (report) report.hidden = true;
@@ -162,7 +217,8 @@ export async function exportYearReviewVideo(year: number): Promise<void> {
   try {
     const chapters = await buildChapters(year);
     if (chapters.length === 0) {
-      showToast('没有带轨迹的月度骑行，无法生成视频。', true);
+      // 一张卡都没有 = 这一年没有记录
+      showToast('还没有可用的年度数据，无法生成视频。', true);
       overlay.hidden = true;
       return;
     }
@@ -201,7 +257,7 @@ export async function exportYearReviewVideo(year: number): Promise<void> {
         } else if (p.phase === 'raster') {
           status.textContent = `预渲染高清地图瓦片 ${done}/${total}（${pct}%）· ${seconds.toFixed(0)}s`;
         } else if (p.phase === 'render') {
-          status.textContent = `逐章渲染 + 硬件编码中… ${pct}% · ${seconds.toFixed(0)}s`;
+          status.textContent = `逐幕渲染 + 硬件编码中… ${pct}% · ${seconds.toFixed(0)}s`;
           fill.style.width = `${pct}%`;
         } else if (p.phase === 'audio') {
           status.textContent = `正在混入背景音乐（AAC）… ${seconds.toFixed(0)}s`;

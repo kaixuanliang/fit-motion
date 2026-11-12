@@ -47,7 +47,6 @@
           <div class="records-sticky" id="records-sticky">
             <div class="pane-head">
               <h1>记录</h1>
-              <span class="yr-entry" id="yr-entry-btn" role="button" tabindex="0" hidden><svg><use href="#i-spark"/></svg>年度回顾</span>
               <span class="sum" id="records-sum">—</span>
             </div>
             <div class="cat-bar" id="cat-bar">
@@ -62,6 +61,14 @@
               <button class="link danger" id="batch-delete" type="button">删除</button>
             </div>
           </div>
+          <button class="yr-banner" id="yr-banner" type="button" hidden>
+            <span class="yr-banner-in">
+              <span class="yr-banner-eyebrow"><svg><use href="#i-spark"/></svg><b id="yr-banner-year">2026</b> 年度回顾</span>
+              <span class="yr-banner-num"><b id="yr-banner-km">0</b><i>公里</i></span>
+              <span class="yr-banner-meta" id="yr-banner-meta">—</span>
+            </span>
+            <span class="yr-banner-go" aria-hidden="true"><svg><use href="#i-back"/></svg></span>
+          </button>
           <div class="record-list" id="record-list"></div>
           <div class="list-foot" id="list-foot" hidden>
             <button class="load-more" id="load-more" type="button">加载更多</button>

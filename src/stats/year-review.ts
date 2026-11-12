@@ -47,6 +47,31 @@ export interface YearTitle {
   desc: string;
 }
 
+/** 单次骑行的某个维度极值（爬升 / 时长 / 里程）。 */
+export interface RidePeak {
+  id: string;
+  name: string;
+  date: number;
+  /** 该维度的极值：爬升米数 / 时长秒 / 里程米 */
+  value: number;
+  /** 这次骑行的总里程（米），做副标题用 */
+  meters: number;
+}
+
+/** 年初第一骑 / 年末最后一骑。 */
+export interface RideMark {
+  date: number;
+  meters: number;
+  name: string;
+}
+
+export interface YearStreak {
+  days: number;
+  /** 连续段的起止（epoch ms），没有连续两天时为 0 */
+  from: number;
+  to: number;
+}
+
 export interface YearReview {
   year: number;
   /** Σ meta.distance */
@@ -70,6 +95,23 @@ export interface YearReview {
   maxHr: number | null;
   topRoutes: TopRoute[];
   title: YearTitle;
+  /** 每天里程（米）：下标 = 当年第几天（0-based，本地时区），长度 366 */
+  heat: number[];
+  /** 周一到周日（0 = 周一）的里程与次数 */
+  weekdayMeters: number[];
+  weekdayRides: number[];
+  /** 24 小时出发次数分布 */
+  hourRides: number[];
+  /** 最长连续骑行天数 */
+  streak: YearStreak;
+  /** 年度之最：最陡 / 最久 / 最长单日 */
+  bestClimb: RidePeak | null;
+  bestDuration: RidePeak | null;
+  /** 年初第一骑、年末最后一骑 */
+  firstRide: RideMark | null;
+  lastRide: RideMark | null;
+  /** 与去年对比：去年没有记录时为 null */
+  prev: { year: number; meters: number; rides: number; rideDays: number } | null;
 }
 
 const PAGE = 500;
@@ -154,35 +196,61 @@ function distanceAnalogy(km: number): string {
 
 export { distanceAnalogy };
 
-/** 年度回顾视频分章：每月取里程最大的一次骑行作代表。 */
-export interface MonthChapter {
-  /** 0-based 月份 */
-  month: number;
-  /** 当月骑行次数 */
-  rides: number;
-  /** 当月总里程（米） */
-  meters: number;
+/** 年度回顾视频高光：不按月平铺，只挑几条各有说法的骑行。 */
+export interface RideHighlight {
   meta: ActivityMeta;
+  /** 幕标题：全年最长 / 爬升最多 / 黄金月 / 最快一次 / 最后一骑 */
+  label: string;
+  /** 幕副标题：日期 · 里程 · 爬升 */
+  note: string;
 }
 
-export async function monthChapters(year: number): Promise<MonthChapter[]> {
+/**
+ * 挑高光骑行（最多 5 条，按叙事顺序）：先给最强的一条，再依次是爬升、
+ * 黄金月代表、速度、收尾。全部只读 meta，不加载轨迹 —— 调用方拿到后再按
+ * 需要抽稀点集。
+ */
+export async function yearHighlights(year: number): Promise<RideHighlight[]> {
   const metas = await metasOfYear(year);
-  const best = new Map<number, ActivityMeta>();
-  const rides = new Map<number, number>();
-  const meters = new Map<number, number>();
-  for (const meta of metas) {
-    const month = new Date(meta.start).getMonth();
-    rides.set(month, (rides.get(month) ?? 0) + 1);
-    meters.set(month, (meters.get(month) ?? 0) + meta.distance);
-    const cur = best.get(month);
-    if (!cur || meta.distance > cur.distance) best.set(month, meta);
+  if (metas.length === 0) return [];
+  const withPoints = metas.filter((meta) => meta.points >= 2);
+  const pool = withPoints.length > 0 ? withPoints : metas;
+
+  const byDistance = pool.reduce((a, b) => (b.distance > a.distance ? b : a));
+  const byClimb = pool.reduce((a, b) => ((b.climb || 0) > (a.climb || 0) ? b : a));
+  const bySpeed = pool.reduce((a, b) => (b.avgSpeed > a.avgSpeed ? b : a));
+  const byLast = pool.reduce((a, b) => (b.start > a.start ? b : a));
+
+  const monthMeters = new Array<number>(12).fill(0);
+  for (const meta of metas) monthMeters[new Date(meta.start).getMonth()] += meta.distance;
+  const goldenMonth = monthMeters.indexOf(Math.max(...monthMeters));
+  const goldenPool = metas.filter((meta) => new Date(meta.start).getMonth() === goldenMonth);
+  const golden = goldenPool.length > 0
+    ? goldenPool.reduce((a, b) => (b.distance > a.distance ? b : a))
+    : null;
+
+  const picked: Array<{ meta: ActivityMeta; label: string }> = [
+    { meta: byDistance, label: '全年最长' },
+    { meta: byClimb, label: '爬升最多' },
+    ...(golden ? [{ meta: golden, label: `${goldenMonth + 1} 月代表` }] : []),
+    { meta: bySpeed, label: '最快一次' },
+    { meta: byLast, label: '最后一骑' },
+  ];
+  const seen = new Set<string>();
+  const out: RideHighlight[] = [];
+  for (const item of picked) {
+    if (seen.has(item.meta.id)) continue;
+    seen.add(item.meta.id);
+    const d = new Date(item.meta.start);
+    const km = (item.meta.distance / 1000).toFixed(item.meta.distance >= 10_000 ? 0 : 1);
+    const climb = Math.round(item.meta.climb || 0);
+    out.push({
+      meta: item.meta,
+      label: item.label,
+      note: `${d.getMonth() + 1}月${d.getDate()}日 · ${km} 公里${climb > 0 ? ` · 爬升 ${climb} 米` : ''}`,
+    });
   }
-  return [...best.keys()].sort((a, b) => a - b).map((month) => ({
-    month,
-    rides: rides.get(month) ?? 1,
-    meters: meters.get(month) ?? 0,
-    meta: best.get(month)!,
-  }));
+  return out;
 }
 
 export async function computeYearReview(year: number): Promise<YearReview | null> {
@@ -198,6 +266,17 @@ export async function computeYearReview(year: number): Promise<YearReview | null
   let maxSpeedAt = 0;
   let bestAvgKmh = 0;
   let maxHr: number | null = null;
+
+  // 内容卡需要的分布数据：日历热力、周节奏、出发时段
+  const yearStart = new Date(year, 0, 1).getTime();
+  const heat = new Array<number>(366).fill(0);
+  const weekdayMeters = new Array<number>(7).fill(0);
+  const weekdayRides = new Array<number>(7).fill(0);
+  const hourRides = new Array<number>(24).fill(0);
+  let bestClimbMeta: ActivityMeta | null = null;
+  let bestDurationMeta: ActivityMeta | null = null;
+  let firstMeta: ActivityMeta | null = null;
+  let lastMeta: ActivityMeta | null = null;
 
   // 天数：先按「开始日期」去重收集，多日记录再单独补 leg 日期。
   // 应用内合并的记录有 mergedFrom；外部导入的多日 FIT 没有，但运动时长
@@ -221,6 +300,18 @@ export async function computeYearReview(year: number): Promise<YearReview | null
     const date = new Date(meta.start);
     months[date.getMonth()] += meta.distance;
     dayKeys.add(`${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`);
+    const dayOfYear = Math.round(
+      (new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime() - yearStart) / 86_400_000,
+    );
+    if (dayOfYear >= 0 && dayOfYear < heat.length) heat[dayOfYear] += meta.distance;
+    const weekday = (date.getDay() + 6) % 7;
+    weekdayMeters[weekday] += meta.distance;
+    weekdayRides[weekday] += 1;
+    hourRides[date.getHours()] += 1;
+    if ((meta.climb || 0) > (bestClimbMeta?.climb ?? 0)) bestClimbMeta = meta;
+    if (meta.duration > (bestDurationMeta?.duration ?? 0)) bestDurationMeta = meta;
+    if (!firstMeta || meta.start < firstMeta.start) firstMeta = meta;
+    if (!lastMeta || meta.start > lastMeta.start) lastMeta = meta;
     if (!longestMeta || meta.distance > longestMeta.distance) longestMeta = meta;
   }
 
@@ -239,6 +330,23 @@ export async function computeYearReview(year: number): Promise<YearReview | null
     } catch {
       // 轨迹已被清理：退回开始日期（已在集合里）
     }
+  }
+
+  // 最长连续骑行天数：把去重后的日期摊成 366 位布尔表再扫一遍（全零成本）
+  const streak = longestStreak(dayKeys, year);
+
+  // 与去年对比：只读 meta，不加载轨迹
+  let prev: YearReview['prev'] = null;
+  const prevMetas = await metasOfYear(year - 1).catch(() => [] as ActivityMeta[]);
+  if (prevMetas.length > 0) {
+    const prevDays = new Set<string>();
+    let prevMeters = 0;
+    for (const meta of prevMetas) {
+      prevMeters += meta.distance;
+      const d = new Date(meta.start);
+      prevDays.add(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
+    }
+    prev = { year: year - 1, meters: prevMeters, rides: prevMetas.length, rideDays: prevDays.size };
   }
 
   // 最长单骑：加载轨迹拿行程信息 + 迷你路线点
@@ -289,8 +397,59 @@ export async function computeYearReview(year: number): Promise<YearReview | null
     bestAvgKmh,
     maxHr,
     topRoutes,
+    heat,
+    weekdayMeters,
+    weekdayRides,
+    hourRides,
+    streak,
+    bestClimb: toPeak(bestClimbMeta, (meta) => meta.climb || 0),
+    bestDuration: toPeak(bestDurationMeta, (meta) => meta.duration),
+    firstRide: toMark(firstMeta),
+    lastRide: toMark(lastMeta),
+    prev,
   };
   return { ...base, title: pickTitle(base) };
+}
+
+function toPeak(meta: ActivityMeta | null, pick: (meta: ActivityMeta) => number): RidePeak | null {
+  if (!meta) return null;
+  const value = pick(meta);
+  if (value <= 0) return null;
+  return { id: meta.id, name: meta.name, date: meta.start, value, meters: meta.distance };
+}
+
+function toMark(meta: ActivityMeta | null): RideMark | null {
+  if (!meta) return null;
+  return { date: meta.start, meters: meta.distance, name: meta.name };
+}
+
+/** 最长连续骑行天数：跨年边界按 366 天表扫，连续段起止换算回时间戳。 */
+function longestStreak(dayKeys: Set<string>, year: number): YearStreak {
+  const flags = new Uint8Array(366);
+  for (const key of dayKeys) {
+    const [y, m, d] = key.split('-').map(Number);
+    if (y !== year) continue;
+    const index = Math.round((new Date(y, m, d).getTime() - new Date(year, 0, 1).getTime()) / 86_400_000);
+    if (index >= 0 && index < flags.length) flags[index] = 1;
+  }
+  let best = 0;
+  let bestStart = -1;
+  let run = 0;
+  for (let i = 0; i < flags.length; i += 1) {
+    if (flags[i]) {
+      run += 1;
+      if (run > best) {
+        best = run;
+        bestStart = i - run + 1;
+      }
+    } else {
+      run = 0;
+    }
+  }
+  if (best < 2 || bestStart < 0) return { days: best, from: 0, to: 0 };
+  const dayMs = 86_400_000;
+  const from = new Date(year, 0, 1).getTime() + bestStart * dayMs;
+  return { days: best, from, to: from + (best - 1) * dayMs };
 }
 
 interface RouteGroup {

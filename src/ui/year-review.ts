@@ -9,7 +9,7 @@
  * 是仪式感优先的内容页，固定配色反而稳定。
  */
 
-import { computeYearReview, distanceAnalogy, type YearReview } from '../stats/year-review';
+import { computeYearReview, distanceAnalogy, type RidePeak, type YearReview } from '../stats/year-review';
 import { exportYearReviewVideo } from './year-video';
 import { saveBlob } from '../export/save';
 import { showToast } from './toast';
@@ -33,19 +33,17 @@ let busy = false;
 let index = 0;
 let review: YearReview | null = null;
 
-/** 记录页顶栏入口：只在所选年份有数据时亮出来。 */
-export function syncYearEntry(yearWithData: boolean): void {
-  const entry = document.getElementById('yr-entry-btn');
-  if (entry) entry.hidden = !yearWithData;
-}
-
 export async function openYearReview(preferredYear?: number): Promise<void> {
   if (open || busy) return;
   open = true;
   const overlay = $('year-review');
   const deck = $('yr-deck');
   overlay.hidden = false;
-  deck.innerHTML = `<div class="yr-loading"><span></span>正在统计你的年度骑行…</div>`;
+  deck.innerHTML = `<div class="yr-loading">
+    <span class="spin"></span>
+    <b>正在统计你的年度骑行</b>
+    <i>汇总里程、天数与常骑路线…</i>
+  </div>`;
 
   // 目标年份：优先显式指定，其次取有数据的最新一年
   let year = preferredYear ?? 0;
@@ -58,7 +56,7 @@ export async function openYearReview(preferredYear?: number): Promise<void> {
         break;
       }
       if (y === now.getFullYear() - 6) {
-        deck.innerHTML = `<div class="yr-loading">还没有可回顾的骑行记录。</div>`;
+        deck.innerHTML = `<div class="yr-loading empty">还没有可回顾的骑行记录。</div>`;
         return;
       }
     }
@@ -66,7 +64,7 @@ export async function openYearReview(preferredYear?: number): Promise<void> {
     review = await computeYearReview(year);
   }
   if (!review) {
-    deck.innerHTML = `<div class="yr-loading">还没有可回顾的骑行记录。</div>`;
+    deck.innerHTML = `<div class="yr-loading empty">还没有可回顾的骑行记录。</div>`;
     return;
   }
   renderDeck(review);
@@ -124,6 +122,61 @@ function miniRouteSvg(sketch: Array<{ lat: number; lon: number }>): string {
   </svg>`;
 }
 
+/** 迷你条形组：max 高亮 + 顶上标数，周节奏与时段共用。 */
+function barGroup(values: number[], labels: string[], topText: (value: number) => string): string {
+  const max = Math.max(...values, 1);
+  const top = values.indexOf(Math.max(...values));
+  const bars = values.map((value, i) => {
+    const height = value > 0 ? Math.max(4, (value / max) * 100) : 2;
+    return `<div class="yr-bar${i === top ? ' top' : ''}"><div class="col" style="height:${height.toFixed(1)}%"><span class="val">${i === top ? topText(value) : ''}</span></div><div class="m">${labels[i]}</div></div>`;
+  }).join('');
+  return `<div class="yr-bars compact">${bars}</div>`;
+}
+
+/**
+ * 骑行日历：53 周 × 7 天的里程热力格。一列一周，周一在最上，
+ * 颜色越亮当天骑得越远 —— 一眼看出「哪几个月在骑」。
+ */
+function heatmapBlock(review: YearReview): string {
+  const cell = 5.4;
+  const gap = 1;
+  const step = cell + gap;
+  const offset = (new Date(review.year, 0, 1).getDay() + 6) % 7;
+  const max = Math.max(...review.heat, 1);
+  const rects: string[] = [];
+  for (let day = 0; day < review.heat.length; day += 1) {
+    const meters = review.heat[day] ?? 0;
+    const slot = day + offset;
+    const col = Math.floor(slot / 7);
+    const row = slot % 7;
+    if (col > 52) continue;
+    const ratio = meters / max;
+    const fill = meters <= 0
+      ? 'rgba(255,255,255,0.06)'
+      : ratio > 0.66 ? 'rgba(216,255,62,0.95)'
+        : ratio > 0.33 ? 'rgba(216,255,62,0.58)'
+          : 'rgba(216,255,62,0.3)';
+    rects.push(`<rect x="${(col * step).toFixed(1)}" y="${(row * step).toFixed(1)}" width="${cell}" height="${cell}" rx="1.4" fill="${fill}"/>`);
+  }
+  const width = 53 * step - gap;
+  const height = 7 * step - gap;
+  return `<div class="yr-heat"><svg viewBox="0 0 ${width.toFixed(0)} ${height.toFixed(0)}">${rects.join('')}</svg></div>
+    <div class="yr-heat-legend"><span>少</span><i class="l0"></i><i class="l1"></i><i class="l2"></i><i class="l3"></i><span>多</span></div>`;
+}
+
+const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'];
+const HOUR_BUCKETS: Array<[string, number, number]> = [
+  ['深夜', 0, 5], ['清晨', 5, 8], ['上午', 8, 11], ['午后', 11, 15], ['傍晚', 15, 18], ['夜间', 18, 24],
+];
+
+function peakRow(kind: string, peak: RidePeak, unit: string, value: string): string {
+  return `<div class="yr-peak">
+    <div class="k">${kind}</div>
+    <div class="v">${value}<i>${unit}</i></div>
+    <div class="d">${fmtDate(peak.date)} · ${peak.name}</div>
+  </div>`;
+}
+
 function buildCards(review: YearReview): string[] {
   const cards: string[] = [];
   const km = review.totalMeters / 1000;
@@ -137,6 +190,11 @@ function buildCards(review: YearReview): string[] {
       <path d="M8 62 C 40 20, 70 70, 104 40 S 170 8, 200 34 S 228 58, 232 50" fill="none" stroke="#d8ff3e" stroke-width="3" stroke-linecap="round"/>
       <circle cx="8" cy="62" r="4" fill="#fff"/><circle cx="232" cy="50" r="4" fill="#e8b84a"/>
     </svg>
+    <div class="yr-cover-stats">
+      <div><b>${fmtKm(review.totalMeters)}</b><i>公里</i></div>
+      <div><b>${review.rideDays}</b><i>天在车上</i></div>
+      <div><b>${review.rides}</b><i>次出发</i></div>
+    </div>
     <div class="yr-hint">滑动开始 ↕</div>
   </section>`);
 
@@ -171,7 +229,37 @@ function buildCards(review: YearReview): string[] {
     </section>`);
   }
 
-  // 5 最长单骑
+  // 5 骑行日历（热力图 + 最长连续）
+  const activeDays = review.heat.filter((v) => v > 0).length;
+  cards.push(`<section class="yr-card">
+    ${eyebrow('RIDING CALENDAR')}
+    <div class="yr-cap strong">${activeDays} 天踩上踏板 —— 一年里的 <b>${Math.round((activeDays / 365) * 100)}%</b></div>
+    ${heatmapBlock(review)}
+    <div class="yr-streak">
+      <b>${review.streak.days}</b><span>天连续骑行</span>
+      ${review.streak.days >= 2 ? `<i>${fmtDate(review.streak.from)} — ${fmtDate(review.streak.to)}</i>` : '<i>明年冲一次连骑</i>'}
+    </div>
+    ${srcNote('数据口径：每格一天（周一在上），亮度 = 当天里程 / 全年单日最高 · 连续段按自然日判定')}
+  </section>`);
+
+  // 6 骑行节奏（一周 / 一天）
+  const weekdayTop = review.weekdayRides.indexOf(Math.max(...review.weekdayRides));
+  const hourCounts = HOUR_BUCKETS.map(([, from, to]) =>
+    review.hourRides.slice(from, to).reduce((total, v) => total + v, 0));
+  const hourTop = hourCounts.indexOf(Math.max(...hourCounts));
+  if (review.weekdayRides.some((v) => v > 0)) {
+    cards.push(`<section class="yr-card">
+      ${eyebrow('RHYTHM')}
+      <div class="yr-cap strong">一周里，周${WEEKDAYS[weekdayTop]}骑得最多 —— ${review.weekdayRides[weekdayTop]} 次</div>
+      ${barGroup(review.weekdayRides, WEEKDAYS.map((d) => `周${d}`), (v) => `${v} 次`)}
+      <div class="yr-gap"></div>
+      <div class="yr-cap strong">一天里，${HOUR_BUCKETS[hourTop][0]}出发最勤</div>
+      ${barGroup(hourCounts, HOUR_BUCKETS.map(([label]) => label), (v) => `${v} 次`)}
+      ${srcNote('数据口径：按记录开始时间统计次数（一次多日行程只算出发那天）')}
+    </section>`);
+  }
+
+  // 7 最长单骑
   if (review.longest) {
     const l = review.longest;
     cards.push(`<section class="yr-card">
@@ -188,14 +276,33 @@ function buildCards(review: YearReview): string[] {
     </section>`);
   }
 
-  // 6 速度时刻（与其它卡统一深夜配色）
+  // 8 速度时刻（与其它卡统一深夜配色）
   cards.push(`<section class="yr-card">${statCard('SPEED MOMENTS',
     `${review.maxSpeedKmh.toFixed(1)}<small>km/h</small>`,
     `年度最高速度 · ${fmtDate(review.maxSpeedAt)}`,
     [[`${review.bestAvgKmh.toFixed(1)}<i>km/h</i>`, '最快单次均速'], [review.maxHr != null ? `${review.maxHr}<i>bpm</i>` : '--', '年度最高心率']],
     '数据口径：max(meta.maxSpeed) · max(meta.avgSpeed) · max(meta.maxHr)')}</section>`);
 
-  // 7 常骑路线
+  // 9 年度之最：最陡 / 最久 / 最早与最晚
+  if (review.bestClimb || review.bestDuration) {
+    cards.push(`<section class="yr-card">
+      ${eyebrow('PERSONAL BESTS')}
+      <div class="yr-cap strong">这一年，你把极限推到了这里</div>
+      <div class="yr-peak-list">
+        ${review.bestClimb ? peakRow('单次爬升最多', review.bestClimb, 'm', `${Math.round(review.bestClimb.value)}`) : ''}
+        ${review.bestDuration ? peakRow('单次骑得最久', review.bestDuration, '小时', `${(review.bestDuration.value / 3600).toFixed(1)}`) : ''}
+        ${review.longest ? `<div class="yr-peak">
+          <div class="k">单日最远</div>
+          <div class="v">${fmtKm(review.longest.meters)}<i>km</i></div>
+          <div class="d">${fmtDate(review.longest.date)} · ${review.longest.name}</div>
+        </div>` : ''}
+      </div>
+      ${review.firstRide && review.lastRide ? `<div class="yr-window">${fmtDate(review.firstRide.date)} 第一次出发 · ${fmtDate(review.lastRide.date)} 收车</div>` : ''}
+      ${srcNote('数据口径：max(meta.climb) · max(meta.duration) · max(meta.distance)')}
+    </section>`);
+  }
+
+  // 10 常骑路线
   if (review.topRoutes.length > 0) {
     const items = review.topRoutes.map((route, i) => `<div class="yr-top-item">
       <div class="rank">${i + 1}</div>
@@ -210,7 +317,34 @@ function buildCards(review: YearReview): string[] {
     </section>`);
   }
 
-  // 8 称号
+  // 11 与去年对比
+  if (review.prev && review.prev.meters > 0) {
+    const prev = review.prev;
+    const delta = (review.totalMeters - prev.meters) / prev.meters;
+    const up = delta >= 0;
+    const pct = Math.abs(Math.round(delta * 100));
+    const cmp = (now: number, before: number, unit: string): string => {
+      const diff = now - before;
+      return `<div class="yr-cmp-row">
+        <span class="k">${unit}</span>
+        <span class="now">${now}</span>
+        <span class="was">去年 ${before}</span>
+        <span class="delta ${diff >= 0 ? 'up' : 'down'}">${diff >= 0 ? '↑' : '↓'}${Math.abs(Math.round(before > 0 ? (diff / before) * 100 : 0))}%</span>
+      </div>`;
+    };
+    cards.push(`<section class="yr-card">
+      ${eyebrow('YEAR OVER YEAR')}
+      <div class="yr-big small ${up ? 'up' : 'down'}">${up ? '+' : '−'}${pct}<small>%</small></div>
+      <div class="yr-cap">${up ? '比去年多骑了' : '比去年少骑了'} ${fmtKm(Math.abs(review.totalMeters - prev.meters))} 公里</div>
+      <div class="yr-cmp">
+        ${cmp(review.rides, prev.rides, '出行次数')}
+        ${cmp(review.rideDays, prev.rideDays, '骑行天数')}
+      </div>
+      ${srcNote(`数据口径：与 ${prev.year} 年度同口径聚合 · 里程 ${fmtKm(prev.meters)} 公里`)}
+    </section>`);
+  }
+
+  // 12 称号
   cards.push(`<section class="yr-card yr-badge-card">
     <div class="yr-badge"><div class="inner">${review.title.emoji}</div></div>
     <div class="yr-title-name">${review.title.name}</div>
@@ -218,7 +352,7 @@ function buildCards(review: YearReview): string[] {
     ${srcNote('称号规则：按总里程 + 最长单骑 + 爬升 + 速度分档授予')}
   </section>`);
 
-  // 9 出口
+  // 13 出口
   cards.push(`<section class="yr-card yr-end">
     ${eyebrow('KEEP IT')}
     <div class="yr-cap strong big-gap">把 ${review.year} 留下来</div>
@@ -229,10 +363,10 @@ function buildCards(review: YearReview): string[] {
       </button>
       <button class="yr-cta" id="yr-share-video" type="button">
         <span class="ic"><svg><use href="#i-play"/></svg></span>
-        <span><b>生成年度回顾视频</b><i>12 个月路线串联 · 约 1 分钟</i></span>
+        <span><b>生成年度回顾视频</b><i>片头 + 5 段高光 + 成绩卡 · 约 40 秒</i></span>
       </button>
     </div>
-    ${srcNote('成绩图：Canvas 直绘年度数据 · 视频：12 个月全局视角逐章渲染')}
+    ${srcNote('成绩图：Canvas 直绘年度数据 · 视频：全局视角逐幕渲染 + 月度节奏收尾')}
   </section>`);
 
   return cards;

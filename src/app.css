@@ -3063,36 +3063,101 @@ html.gl-preview #stage-canvas {
 /* ── 年度骑行回顾（Wrapped 式全屏翻卡）────────────────────── */
 /* 这页是仪式感优先的内容页：固定深夜配色，不跟随明暗主题 */
 
-/* 记录页顶栏是 h1 + 年度回顾 + sum 三件套：把入口排到最右，
-   sum 靠 auto margin 收在它左边 —— 居中位置会被 Mate 30 Pro 这类
-   刘海屏挡住，右上角最稳。 */
-.pane-head .yr-entry {
-  display: inline-flex;
+/* 记录页的年度回顾入口：一张深色横幅卡排在列表最上方。
+   顶栏留给筛选与统计这些工具，内容入口做成卡，滚动时自然让位。 */
+.yr-banner {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 15px 16px 15px 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(216, 255, 62, 0.22);
+  background:
+    radial-gradient(130% 190% at 92% -30%, rgba(216, 255, 62, 0.24), rgba(216, 255, 62, 0) 62%),
+    linear-gradient(135deg, #16465c 0%, #0e2735 58%, #0a1a24 100%);
+  color: #fff;
+  text-align: left;
+  font-family: inherit;
+  overflow: hidden;
+  cursor: pointer;
+  box-shadow: 0 12px 26px -18px rgba(0, 0, 0, 0.9);
+}
+.yr-banner::after {
+  content: "";
+  position: absolute;
+  right: -34px;
+  top: -46px;
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  border: 1px solid rgba(216, 255, 62, 0.16);
+  box-shadow: 0 0 0 18px rgba(216, 255, 62, 0.05), 0 0 0 42px rgba(216, 255, 62, 0.028);
+  pointer-events: none;
+}
+.yr-banner:active { transform: scale(0.99); }
+.yr-banner.gone { display: none; }
+.yr-banner-in {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.yr-banner-eyebrow {
+  display: flex;
   align-items: center;
   gap: 5px;
-  order: 3;
-  padding: 5px 12px;
-  border-radius: 99px;
-  border: 1px solid var(--accent-line);
-  color: var(--accent);
-  font-size: 12px;
+  font-size: 10.5px;
   font-weight: 600;
-  letter-spacing: 0.5px;
-  cursor: pointer;
-  align-self: center;
-  white-space: nowrap;
+  letter-spacing: 2px;
+  color: rgba(216, 255, 62, 0.9);
 }
-.pane-head .yr-entry svg {
-  width: 14px;
-  height: 14px;
+.yr-banner-eyebrow b { font-size: 11px; letter-spacing: 1px; color: #fff; }
+.yr-banner-eyebrow svg {
+  width: 12px;
+  height: 12px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.8;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.pane-head .yr-entry:active {
-  transform: scale(0.96);
+.yr-banner-num { display: flex; align-items: baseline; gap: 5px; }
+.yr-banner-num b {
+  font-size: 27px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.yr-banner-num i { font-style: normal; font-size: 11px; color: rgba(216, 255, 62, 0.85); }
+.yr-banner-meta { font-size: 11px; color: rgba(255, 255, 255, 0.55); letter-spacing: 0.4px; }
+.yr-banner-go {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: rgba(216, 255, 62, 0.14);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.yr-banner-go svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: #d8ff3e;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transform: rotate(180deg);
 }
 
 .yr-overlay {
@@ -3163,25 +3228,33 @@ html.gl-preview #stage-canvas {
   transform: translateX(-60px) scale(0.96);
 }
 
+/* 统计中的过场：铺满整个屏幕居中（原来靠 margin:auto，纵向没居中，
+   文字挤在顶部又被关闭按钮和刘海压住）。 */
 .yr-loading {
-  margin: auto;
-  text-align: center;
-  color: rgba(255, 255, 255, 0.6);
-  font-size: 14px;
-  letter-spacing: 1px;
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
+  justify-content: center;
+  gap: 13px;
+  padding: calc(110px + env(safe-area-inset-top)) 34px calc(130px + env(safe-area-inset-bottom));
+  text-align: center;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 13px;
+  letter-spacing: 0.6px;
 }
-.yr-loading span {
-  width: 30px;
-  height: 30px;
+.yr-loading .spin {
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
-  border: 3px solid rgba(216, 255, 62, 0.25);
+  border: 3px solid rgba(216, 255, 62, 0.22);
   border-top-color: #d8ff3e;
   animation: yr-spin 0.9s linear infinite;
 }
+.yr-loading b { font-size: 16px; font-weight: 600; color: #fff; letter-spacing: 1.2px; }
+.yr-loading i { font-style: normal; font-size: 11.5px; color: rgba(255, 255, 255, 0.42); letter-spacing: 0.6px; }
+.yr-loading.empty { font-size: 14px; color: rgba(255, 255, 255, 0.55); }
 @keyframes yr-spin { to { transform: rotate(360deg); } }
 
 .yr-eyebrow {
@@ -3315,6 +3388,130 @@ html.gl-preview #stage-canvas {
   width: 100%;
   text-align: center;
 }
+
+/* 节奏卡里两组小条形：比月度分布的 210px 矮一档，两张图塞得进一屏 */
+.yr-bars.compact { height: 118px; margin: 10px 0 0; gap: 6px; }
+.yr-bars.compact .yr-bar .m { font-size: 9px; }
+.yr-gap { height: 22px; }
+
+/* 封面数据行 */
+.yr-cover-stats {
+  display: flex;
+  gap: 10px;
+  margin-top: 26px;
+  width: 100%;
+  max-width: 320px;
+}
+.yr-cover-stats > div {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 6px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.yr-cover-stats b { font-size: 20px; font-weight: 700; color: #fff; font-variant-numeric: tabular-nums; }
+.yr-cover-stats i { font-style: normal; font-size: 10px; color: rgba(216, 255, 62, 0.75); letter-spacing: 0.6px; }
+
+/* 骑行日历热力图 */
+.yr-heat {
+  margin: 16px 0 0;
+  padding: 12px 12px 10px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.yr-heat svg { display: block; width: 100%; height: auto; }
+.yr-heat-legend {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 8px;
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.4);
+}
+.yr-heat-legend i { width: 8px; height: 8px; border-radius: 2px; }
+.yr-heat-legend .l0 { background: rgba(255, 255, 255, 0.06); }
+.yr-heat-legend .l1 { background: rgba(216, 255, 62, 0.3); }
+.yr-heat-legend .l2 { background: rgba(216, 255, 62, 0.58); }
+.yr-heat-legend .l3 { background: rgba(216, 255, 62, 0.95); }
+.yr-streak {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 14px;
+}
+.yr-streak b { font-size: 30px; font-weight: 700; color: #d8ff3e; font-variant-numeric: tabular-nums; }
+.yr-streak span { font-size: 12px; color: rgba(255, 255, 255, 0.6); }
+.yr-streak i {
+  margin-left: auto;
+  font-style: normal;
+  font-size: 10.5px;
+  color: rgba(255, 255, 255, 0.42);
+  letter-spacing: 0.3px;
+}
+
+/* 年度之最 */
+.yr-peak-list { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+.yr-peak {
+  position: relative;
+  padding: 13px 15px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 10px;
+}
+.yr-peak .k { font-size: 11px; letter-spacing: 1px; color: rgba(255, 255, 255, 0.5); }
+.yr-peak .v {
+  grid-row: span 2;
+  align-self: center;
+  font-size: 27px;
+  font-weight: 700;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+.yr-peak .v i { font-style: normal; font-size: 12px; color: #e8b84a; margin-left: 3px; }
+.yr-peak .d {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.42);
+  grid-column: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.yr-window {
+  margin-top: 14px;
+  font-size: 11px;
+  color: rgba(216, 255, 62, 0.7);
+  letter-spacing: 0.4px;
+}
+
+/* 与去年对比 */
+.yr-big.small.up { color: #fff; }
+.yr-big.small.up small { color: #d8ff3e; }
+.yr-big.small.down small { color: #e8b84a; }
+.yr-cmp { margin-top: 20px; display: flex; flex-direction: column; gap: 8px; }
+.yr-cmp-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 11px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  font-size: 12px;
+}
+.yr-cmp-row .k { color: rgba(255, 255, 255, 0.55); letter-spacing: 0.6px; }
+.yr-cmp-row .now { margin-left: auto; font-size: 20px; font-weight: 700; color: #fff; font-variant-numeric: tabular-nums; }
+.yr-cmp-row .was { font-size: 10.5px; color: rgba(255, 255, 255, 0.38); }
+.yr-cmp-row .delta { font-size: 11px; font-weight: 600; }
+.yr-cmp-row .delta.up { color: #d8ff3e; }
+.yr-cmp-row .delta.down { color: #e8b84a; }
 
 .yr-mini {
   margin: 16px 0 6px;

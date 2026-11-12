@@ -495,6 +495,9 @@ export interface Stats extends LibraryStats {
   bySrc: Record<string, number>;
   /** 年份 × 来源的交叉计数，列表页的「共 N 条」直接用 */
   byBoth: Record<string, number>;
+  /** 每年的总里程（米）/ 骑行天数，记录页年度回顾横幅卡直接用 */
+  byYearM: Record<string, number>;
+  byYearDays: Record<string, number>;
 }
 
 export async function libraryStats(): Promise<Stats> {
@@ -506,6 +509,9 @@ export async function libraryStats(): Promise<Stats> {
   const byYear: Record<string, number> = {};
   const bySrc: Record<string, number> = {};
   const byBoth: Record<string, number> = {};
+  const byYearM: Record<string, number> = {};
+  const byYearDays: Record<string, number> = {};
+  const daySets = new Map<string, Set<number>>();
   let count = 0;
   let distanceM = 0;
   let durationSec = 0;
@@ -522,6 +528,13 @@ export async function libraryStats(): Promise<Stats> {
     // 展示分组：华为 JSON 归入 GPX 组（列表卡片另有「华为」徽标）
     const group = row.src === 'huawei' ? 'gpx' : row.src;
     byYear[year] = (byYear[year] ?? 0) + 1;
+    byYearM[year] = (byYearM[year] ?? 0) + row.distance;
+    // 骑行天数按自然日去重（多日行程只算开始那天，横幅卡是概览，够用且零成本）
+    const start = new Date(row.start);
+    const dayKey = start.getFullYear() * 10_000 + (start.getMonth() + 1) * 100 + start.getDate();
+    const bucket = daySets.get(year);
+    if (bucket) bucket.add(dayKey);
+    else daySets.set(year, new Set([dayKey]));
     bySrc[group] = (bySrc[group] ?? 0) + 1;
     const yk = `${year}|${group}`;
     byBoth[yk] = (byBoth[yk] ?? 0) + 1;
@@ -529,7 +542,8 @@ export async function libraryStats(): Promise<Stats> {
     byBoth[`all|${group}`] = (byBoth[`all|${group}`] ?? 0) + 1;
     byBoth['all|all'] = (byBoth['all|all'] ?? 0) + 1;
   }
-  const value = { count, distanceM, durationSec, first, last, byYear, bySrc, byBoth };
+  for (const [year, days] of daySets) byYearDays[year] = days.size;
+  const value = { count, distanceM, durationSec, first, last, byYear, bySrc, byBoth, byYearM, byYearDays };
   statsCache = { key, value };
   return value;
 }

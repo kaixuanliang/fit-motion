@@ -52,11 +52,15 @@ for (let i = 0; i < 3; i += 1) {
 }
 await page.evaluate(() => window.dispatchEvent(new CustomEvent('fitmotion:records-changed')));
 
-await page.waitForFunction(() => !document.getElementById('yr-entry-btn')?.hidden, { timeout: 30_000 });
-console.log('入口可见 ✓');
+await page.waitForFunction(() => {
+  const banner = document.getElementById('yr-banner');
+  return banner && !banner.hidden;
+}, { timeout: 30_000 });
+console.log('入口横幅可见 ✓');
+await page.screenshot({ path: 'tools/downloads/yr-banner.png' });
 
 // 打开年度回顾
-await page.click('#yr-entry-btn');
+await page.click('#yr-banner');
 await page.waitForFunction(() => document.querySelectorAll('#yr-deck .yr-card').length > 0, { timeout: 120_000 });
 const meta = await page.evaluate(() => ({
   cards: document.querySelectorAll('#yr-deck .yr-card').length,
@@ -72,9 +76,13 @@ await shot('cover');
 await next(); await shot('distance');
 await next(); await shot('time');
 await next(); await shot('months');
+await next(); await shot('calendar');
+await next(); await shot('rhythm');
 await next(); await shot('longest');
 await next(); await shot('speed');
+await next(); await shot('peak');
 await next(); await shot('top');
+await next(); await shot('yoy');
 await next(); await shot('badge');
 await next(); await shot('end');
 
