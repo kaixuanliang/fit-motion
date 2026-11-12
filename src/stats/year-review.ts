@@ -196,63 +196,6 @@ function distanceAnalogy(km: number): string {
 
 export { distanceAnalogy };
 
-/** 年度回顾视频高光：不按月平铺，只挑几条各有说法的骑行。 */
-export interface RideHighlight {
-  meta: ActivityMeta;
-  /** 幕标题：全年最长 / 爬升最多 / 黄金月 / 最快一次 / 最后一骑 */
-  label: string;
-  /** 幕副标题：日期 · 里程 · 爬升 */
-  note: string;
-}
-
-/**
- * 挑高光骑行（最多 5 条，按叙事顺序）：先给最强的一条，再依次是爬升、
- * 黄金月代表、速度、收尾。全部只读 meta，不加载轨迹 —— 调用方拿到后再按
- * 需要抽稀点集。
- */
-export async function yearHighlights(year: number): Promise<RideHighlight[]> {
-  const metas = await metasOfYear(year);
-  if (metas.length === 0) return [];
-  const withPoints = metas.filter((meta) => meta.points >= 2);
-  const pool = withPoints.length > 0 ? withPoints : metas;
-
-  const byDistance = pool.reduce((a, b) => (b.distance > a.distance ? b : a));
-  const byClimb = pool.reduce((a, b) => ((b.climb || 0) > (a.climb || 0) ? b : a));
-  const bySpeed = pool.reduce((a, b) => (b.avgSpeed > a.avgSpeed ? b : a));
-  const byLast = pool.reduce((a, b) => (b.start > a.start ? b : a));
-
-  const monthMeters = new Array<number>(12).fill(0);
-  for (const meta of metas) monthMeters[new Date(meta.start).getMonth()] += meta.distance;
-  const goldenMonth = monthMeters.indexOf(Math.max(...monthMeters));
-  const goldenPool = metas.filter((meta) => new Date(meta.start).getMonth() === goldenMonth);
-  const golden = goldenPool.length > 0
-    ? goldenPool.reduce((a, b) => (b.distance > a.distance ? b : a))
-    : null;
-
-  const picked: Array<{ meta: ActivityMeta; label: string }> = [
-    { meta: byDistance, label: '全年最长' },
-    { meta: byClimb, label: '爬升最多' },
-    ...(golden ? [{ meta: golden, label: `${goldenMonth + 1} 月代表` }] : []),
-    { meta: bySpeed, label: '最快一次' },
-    { meta: byLast, label: '最后一骑' },
-  ];
-  const seen = new Set<string>();
-  const out: RideHighlight[] = [];
-  for (const item of picked) {
-    if (seen.has(item.meta.id)) continue;
-    seen.add(item.meta.id);
-    const d = new Date(item.meta.start);
-    const km = (item.meta.distance / 1000).toFixed(item.meta.distance >= 10_000 ? 0 : 1);
-    const climb = Math.round(item.meta.climb || 0);
-    out.push({
-      meta: item.meta,
-      label: item.label,
-      note: `${d.getMonth() + 1}月${d.getDate()}日 · ${km} 公里${climb > 0 ? ` · 爬升 ${climb} 米` : ''}`,
-    });
-  }
-  return out;
-}
-
 export async function computeYearReview(year: number): Promise<YearReview | null> {
   const metas = await metasOfYear(year);
   if (metas.length === 0) return null;

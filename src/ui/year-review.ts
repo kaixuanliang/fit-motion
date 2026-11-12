@@ -10,7 +10,6 @@
  */
 
 import { computeYearReview, distanceAnalogy, type RidePeak, type YearReview } from '../stats/year-review';
-import { exportYearReviewVideo } from './year-video';
 import { saveBlob } from '../export/save';
 import { showToast } from './toast';
 
@@ -360,12 +359,8 @@ function buildCards(review: YearReview): string[] {
         <span class="ic"><svg><use href="#i-download"/></svg></span>
         <span><b>生成年度成绩图</b><i>一张 1080×1920 分享图</i></span>
       </button>
-      <button class="yr-cta" id="yr-share-video" type="button">
-        <span class="ic"><svg><use href="#i-play"/></svg></span>
-        <span><b>生成年度回顾视频</b><i>片头 + 5 段高光 + 成绩卡 · 约 40 秒</i></span>
-      </button>
     </div>
-    ${srcNote('成绩图：Canvas 直绘年度数据 · 视频：全局视角逐幕渲染 + 月度节奏收尾')}
+    ${srcNote('成绩图：Canvas 直绘年度数据 · 生成后可保存到相册或直接分享')}
   </section>`);
 
   return cards;
@@ -381,9 +376,6 @@ function renderDeck(review: YearReview): void {
 
   $('yr-close').onclick = closeYearReview;
   deck.querySelector('#yr-share-img')?.addEventListener('click', () => void exportYearImage(review));
-  deck.querySelector('#yr-share-video')?.addEventListener('click', () => {
-    void exportYearReviewVideo(review.year);
-  });
 }
 
 function go(next: number): void {

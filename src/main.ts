@@ -17,7 +17,6 @@ import { THEMES, isThemeId, type ThemeId } from './render/theme';
 import { bindTabbar, currentPane, showPane } from './ui/router';
 import { initRecords, type RecordsApi } from './ui/records';
 import { closeYearReview, yearReviewOpen } from './ui/year-review';
-import { cancelYearVideo, yearVideoBusy } from './ui/year-video';
 import { initImport, type ImportApi } from './ui/import-page';
 import { initMerge, type MergeApi } from './ui/merge-page';
 import { initTrash, type TrashApi } from './ui/trash-page';
@@ -501,11 +500,6 @@ function bindEvents(): void {
       requestExportCancel();
       return true;
     }
-    // 年度回顾视频走独立的导出会话，返回键同样先取消
-    if (yearVideoBusy()) {
-      cancelYearVideo();
-      return true;
-    }
     // 记录页批量选择模式：返回键先退出多选，不退出页面
     if (records?.exitSelectingIfActive()) return true;
     // 年度回顾是全屏覆盖页：返回键先退回记录页，不能直接退到桌面
@@ -686,11 +680,6 @@ function bindEvents(): void {
     if (exportReportOpen) {
       resetExportOverlayUi();
       exportOverlay.hidden = true;
-      return;
-    }
-    // 年度回顾视频导出期间，这个按钮属于 year-video 会话
-    if (yearVideoBusy()) {
-      cancelYearVideo();
       return;
     }
     if (!exporting) {
@@ -1914,7 +1903,6 @@ function timelineLabel(): string {
 
 async function exportNativeScene(): Promise<void> {
   if (!currentStage || exporting || !currentActivity) return;
-  if (yearVideoBusy()) return;
   const bridge = window.FitMotionAndroid;
   if (!bridge || typeof bridge.nativeExportUrl !== 'function') {
     showToast('原生渲染仅支持 Android App。', true);

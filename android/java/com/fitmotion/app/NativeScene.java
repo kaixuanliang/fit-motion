@@ -2784,10 +2784,6 @@ final class NativeRenderJob {
     static JSONObject render(Context context, String payloadJson) throws Exception {
         cancelRequested = false;
         JSONObject payload = new JSONObject(payloadJson);
-        JSONArray chapters = payload.optJSONArray("chapters");
-        if (chapters != null && chapters.length() > 0) {
-            return renderChapters(context, payload, chapters);
-        }
         int width = payload.optInt("width", 1080);
         int height = payload.optInt("height", 1920);
         int fps = payload.optInt("fps", 30);
@@ -2925,121 +2921,6 @@ final class NativeRenderJob {
             String note = mixError.getMessage() == null ? "混流失败" : mixError.getMessage();
             response.put("audioNote", note);
             return encoded;
-        }
-    }
-
-    /**
-     * 年度回顾分章导出：payload.chapters[] 携带每章一份完整的场景 payload
-     * （globalView 强制开、非末章 noOutro）。一个编码器会话贯穿全片，逐章
-     * 建 NativeVectorMap + NativeRouteScene → 预光栅 → 编码 → 释放，PTS 用
-     * 全局帧号保持连续。相邻章节的瓦片走磁盘缓存，地理邻近的路线几乎不
-     * 重复下载；内存峰值与单条视频相同。
-     */
-    static JSONObject renderChapters(Context context, JSONObject payload, JSONArray chapters) throws Exception {
-        int width = payload.optInt("width", 1080);
-        int height = payload.optInt("height", 1920);
-        int fps = payload.optInt("fps", 30);
-        int bitrate = payload.optInt("bitrate", 4_000_000);
-        int count = chapters.length();
-        int totalFramesAll = 0;
-        for (int c = 0; c < count; c += 1) {
-            totalFramesAll += Math.max(1,
-                    (int) Math.ceil(chapters.getJSONObject(c).optDouble("durationSec", 7.2) * fps));
-        }
-        File temp = new File(context.getCacheDir(),
-                "fit-motion-native-scene-" + System.currentTimeMillis() + ".mp4");
-        long started = SystemClock.elapsedRealtime();
-        int threads = Math.max(2, Math.min(5, Runtime.getRuntime().availableProcessors() - 2));
-
-        progressPhase = "prefetch";
-        progressDone.set(0);
-        progressTotal.set(count);
-        NativeEncoder encoder = new NativeEncoder(width, height, bitrate, fps, temp);
-        int ptsFrame = 0;
-        int framesDone = 0;
-        int rasterTotal = 0;
-        long tileLoadMs = 0;
-        try {
-            encoder.start();
-            for (int c = 0; c < count; c += 1) {
-                if (cancelRequested) throw new java.io.IOException("导出已取消");
-                JSONObject chapter = chapters.getJSONObject(c);
-                // 数据卡幕：不需要地图瓦片，整帧 Canvas 直绘后上传纹理即可
-                if ("card".equals(chapter.optString("kind"))) {
-                    int cardFrames = Math.max(1,
-                            (int) Math.ceil(chapter.optDouble("durationSec", 4.0) * fps));
-                    progressPhase = "render";
-                    progressTotal.set(totalFramesAll);
-                    NativeCardScene card = new NativeCardScene(chapter, width, height, fps);
-                    for (int i = 0; i < cardFrames; i += 1) {
-                        if (cancelRequested) throw new java.io.IOException("导出已取消");
-                        progressDone.set(framesDone + i);
-                        encoder.encodeScene(card, i, cardFrames, ptsFrame + i);
-                    }
-                    framesDone += cardFrames;
-                    ptsFrame += cardFrames;
-                    card.release();
-                    continue;
-                }
-                chapter.put("globalView", true);
-                if (c < count - 1) chapter.put("noOutro", true);
-                long tilesStart = SystemClock.elapsedRealtime();
-                NativeVectorMap follow = new NativeVectorMap(chapter, context.getCacheDir(),
-                        NativeVectorMap.FOLLOW_ZOOM, false, false);
-                NativeVectorMap overview = new NativeVectorMap(chapter, context.getCacheDir(),
-                        overviewZoom(chapter), true);
-                NativeRouteScene scene = new NativeRouteScene(chapter, follow, overview, width, height, fps);
-                tileLoadMs += SystemClock.elapsedRealtime() - tilesStart;
-                progressDone.set(c);
-
-                List<long[]> overviewTargets = scene.overviewPrerasterTargets();
-                overview.setBitmapLimit(Math.max(scene.overviewCacheLimit(), overviewTargets.size() + 24));
-                overview.ensureTiles(overviewTargets);
-                progressPhase = "raster";
-                rasterTotal += overviewTargets.size();
-                progressTotal.set(rasterTotal);
-                overview.preRaster(overviewTargets, scene.overviewTilePx(), threads, progressDone);
-                overview.awaitPreRaster();
-                if (cancelRequested) throw new java.io.IOException("导出已取消");
-
-                int totalFrames = Math.max(1,
-                        (int) Math.ceil(chapter.optDouble("durationSec", 7.2) * fps));
-                progressPhase = "render";
-                progressTotal.set(totalFramesAll);
-                for (int i = 0; i < totalFrames; i += 1) {
-                    if (cancelRequested) throw new java.io.IOException("导出已取消");
-                    progressDone.set(framesDone + i);
-                    encoder.encodeScene(scene, i, totalFrames, ptsFrame + i);
-                }
-                framesDone += totalFrames;
-                ptsFrame += totalFrames;
-                scene.release();
-                follow.drainDeleted();
-                overview.drainDeleted();
-            }
-            progressDone.set(totalFramesAll);
-            long elapsed = SystemClock.elapsedRealtime() - started;
-            File encoded = encoder.finish();
-            JSONObject response = new JSONObject();
-            response.put("ok", true);
-            response.put("chapters", count);
-            response.put("frames", totalFramesAll);
-            response.put("tileLoadMs", tileLoadMs);
-            File result = mixAudioIfNeeded(context, payload, encoded, response);
-            if (payload.optBoolean("preview", false)) {
-                // 预览模式：不写 MediaStore，把 mp4 留在缓存里由 /video 端点
-                // 供 WebView 拉取，用户看完（自动保存）或关闭后 /discard 清理。
-                response.put("previewToken", result.getName());
-            } else {
-                String uri = NativeFrameServer.saveNativeVideo(context, result);
-                result.delete();
-                response.put("uri", uri);
-            }
-            response.put("seconds", elapsed / 1000.0);
-            return response;
-        } catch (Exception error) {
-            try { encoder.abort(); } catch (Exception ignored) { }
-            throw error;
         }
     }
 

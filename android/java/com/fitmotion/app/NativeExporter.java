@@ -192,18 +192,6 @@ final class NativeFrameServer {
                 String saved = saveNativeVideo(context, file);
                 file.delete();
                 respond(socket, 200, "{\"ok\":true,\"uri\":\"" + saved.replace("\"", "\\\"") + "\"}");
-            } else if (path.endsWith("/video")) {
-                // 预览模式：把 render 留在缓存里的 mp4 原样吐给 WebView。
-                File preview = previewFile(context, queryValue(query, "t"));
-                respondVideo(socket, preview);
-            } else if (path.endsWith("/discard")) {
-                try {
-                    File preview = previewFile(context, queryValue(query, "t"));
-                    preview.delete();
-                } catch (IOException ignored) {
-                    // 已经不在了就算清过了
-                }
-                respond(socket, 200, "{\"ok\":true}");
             } else if (path.endsWith("/abort")) {
                 NativeRenderJob.requestCancel();
                 if (encoder != null) {
@@ -246,57 +234,6 @@ final class NativeFrameServer {
             }
         }
         return fallback;
-    }
-
-    private String queryValue(String query, String key) {
-        for (String pair : query.split("&")) {
-            int equals = pair.indexOf('=');
-            if (equals <= 0) continue;
-            if (!key.equals(pair.substring(0, equals))) continue;
-            try {
-                return URLDecoder.decode(pair.substring(equals + 1), "UTF-8");
-            } catch (Exception ignored) {
-                return "";
-            }
-        }
-        return "";
-    }
-
-    /**
-     * 预览文件定位：只接受本服务自己签发的缓存文件名（fit-motion- 前缀 +
-     * 白名单字符），防路径穿越；文件必须真实存在。
-     */
-    private static File previewFile(Context context, String token) throws IOException {
-        if (token == null || !token.startsWith("fit-motion-") || !token.matches("[A-Za-z0-9._-]+")) {
-            throw new IOException("无效的预览标识");
-        }
-        File file = new File(context.getCacheDir(), token);
-        if (!file.exists() || !file.isFile()) throw new IOException("预览文件不存在");
-        return file;
-    }
-
-    /** 原样回吐 mp4（fetch blob 用，不需要 Range 支持）。 */
-    private void respondVideo(Socket socket, File file) throws IOException {
-        long length = file.length();
-        String header = "HTTP/1.1 200 OK\r\n"
-                + "Content-Type: video/mp4\r\n"
-                + "Access-Control-Allow-Origin: *\r\n"
-                + "Access-Control-Allow-Methods: POST, GET, OPTIONS\r\n"
-                + "Access-Control-Allow-Headers: Content-Type\r\n"
-                + "Access-Control-Allow-Private-Network: true\r\n"
-                + "Content-Length: " + length + "\r\n"
-                + "Connection: close\r\n\r\n";
-        OutputStream output = socket.getOutputStream();
-        output.write(header.getBytes("UTF-8"));
-        FileInputStream input = new FileInputStream(file);
-        try {
-            byte[] buffer = new byte[64 * 1024];
-            int read;
-            while ((read = input.read(buffer)) > 0) output.write(buffer, 0, read);
-            output.flush();
-        } finally {
-            input.close();
-        }
     }
 
     private void respond(Socket socket, int status, String body) throws IOException {

@@ -125,13 +125,6 @@ console.log('成绩图截图 ✓');
 const summary = await page.evaluate(() => window.__yrSummary ?? null);
 console.log('summary:', JSON.stringify(summary));
 
-// 视频出口：浏览器无原生桥，应给出「仅支持 Android App」提示而不是报错
-await page.evaluate(() => document.getElementById('yr-share-video').click());
-await page.waitForFunction(() => {
-  const toast = document.querySelector('.toast, [class*="toast"]');
-  return toast && /Android/.test(toast.textContent || '');
-}, { timeout: 10_000 });
-console.log('视频出口提示 ✓（浏览器无原生桥，预期行为）');
 
 await browser.close();
 console.log('DONE');
