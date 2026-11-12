@@ -10,17 +10,39 @@
  *
  * 卡片幕走 Java 的 NativeCardScene（Canvas 直绘 + 纹理上传），路线幕复用
  * 原来的 NativeRouteScene。一个编码器会话贯穿全片，PTS 全局连续。
+ * 配色跟随当前 UI 主题（data-theme），不再固定科技绿。
+ *
+ * 出口是「先预览后落盘」：payload 带 preview，原生只编码不写 MediaStore，
+ * JS 拉回 blob 全屏播放，ended 后自动保存并关闭预览。
  */
 
 import { computeYearReview, yearHighlights } from '../stats/year-review';
 import { loadActivity } from '../store/repo';
 import { formatDateParts, formatDuration, formatSpeedKmh } from '../fit/activity';
-import { THEMES } from '../render/theme';
+import { THEMES, isThemeId, type ThemeId, type VideoTheme } from '../render/theme';
 import { renderMusicPcm } from '../audio/synth';
 import { currentMusicId } from './music';
+import { saveBlob } from '../export/save';
 import { showToast } from './toast';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
+
+/** 当前 UI 主题（main.ts 把 data-theme 挂在 <html> 上），视频配色跟它走。 */
+function activeThemeId(): ThemeId {
+  const raw = document.documentElement.dataset.theme ?? '';
+  return isThemeId(raw) ? raw : 'tech';
+}
+
+/** 数据卡调色板：从当前视频主题提取，传给 NativeCardScene 直绘。 */
+function cardPalette(theme: VideoTheme): Record<string, string> {
+  return {
+    ink: theme.text,
+    accent: theme.accent,
+    warn: theme.orange,
+    bgTop: theme.art.bg2,
+    bgBottom: theme.art.bg1,
+  };
+}
 
 /** 路线幕：封面 1s + 入场 0.8s + 巡游（Java 侧 COVER/INTRO 常量对齐）。 */
 const ROUTE_CHAPTER_SEC = 5.6;
@@ -34,13 +56,88 @@ const CHAPTER_POINTS = 4000;
 let busy = false;
 let abortController: AbortController | null = null;
 
+/** 预览会话：渲染完成后的 mp4 在手里，播完自动保存，关掉则丢弃。 */
+let preview: { blob: Blob; token: string; year: number; overlay: HTMLElement; url: string } | null = null;
+
 export function yearVideoBusy(): boolean {
   return busy;
 }
 
+export function yearVideoPreviewOpen(): boolean {
+  return preview !== null;
+}
+
 export function cancelYearVideo(): void {
   abortController?.abort();
+  discardYearVideoPreview();
   void fetch(`${exportBase()}/abort`, { method: 'POST', mode: 'cors' }).catch(() => { });
+}
+
+/** 关闭预览并让原生侧删掉缓存文件（不保存）。 */
+export function discardYearVideoPreview(): void {
+  if (!preview) return;
+  const state = preview;
+  preview = null;
+  busy = false;
+  state.overlay.remove();
+  window.setTimeout(() => URL.revokeObjectURL(state.url), 1000);
+  void fetch(`${exportBase()}/discard?t=${encodeURIComponent(state.token)}`, {
+    method: 'POST',
+    mode: 'cors',
+  }).catch(() => { });
+}
+
+/** 播完（或用户点「保存」）后的落地：写 MediaStore → 关预览 → 删缓存。 */
+async function saveYearVideoPreview(): Promise<void> {
+  if (!preview) return;
+  const state = preview;
+  try {
+    const result = await saveBlob(state.blob, `FitMotion-${state.year}年度回顾.mp4`, 'video/mp4');
+    showToast(result === 'manual'
+      ? '年度回顾视频已生成，请点击“保存到手机”。'
+      : `年度回顾视频已保存到 Download/FIT Motion`);
+  } catch (error) {
+    console.error(error);
+    showToast('年度回顾视频保存失败，请重试。', true);
+    return;
+  }
+  discardYearVideoPreview();
+}
+
+/** 全屏预览：自动播放，播完自动保存并关闭；也可提前保存或关闭。 */
+function openVideoPreview(blob: Blob, token: string, year: number): void {
+  const overlay = document.createElement('div');
+  overlay.className = 'yr-video-preview';
+  const video = document.createElement('video');
+  video.controls = true;
+  video.playsInline = true;
+  video.autoplay = true;
+  const url = URL.createObjectURL(blob);
+  video.src = url;
+  const bar = document.createElement('div');
+  bar.className = 'yr-video-bar';
+  const tip = document.createElement('div');
+  tip.className = 'tip';
+  tip.textContent = '预览播放完毕后会自动保存到 Download/FIT Motion';
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.textContent = '关闭';
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.className = 'save';
+  save.textContent = '保存';
+  bar.append(tip, close, save);
+  overlay.append(video, bar);
+  document.body.appendChild(overlay);
+  preview = { blob, token, year, overlay, url };
+
+  // 播完自动落地并关闭
+  video.addEventListener('ended', () => { void saveYearVideoPreview(); });
+  close.addEventListener('click', () => discardYearVideoPreview());
+  save.addEventListener('click', () => { void saveYearVideoPreview(); });
+  void video.play().catch(() => {
+    // 自动播放被拦时退到手动：用户点播放即可，行为不变
+  });
 }
 
 function exportBase(): string {
@@ -96,6 +193,8 @@ interface CardChapterPayload {
   titleName: string;
   titleDesc: string;
   months: number[];
+  /** 主题调色板（ink/accent/warn/bgTop/bgBottom），Java 端缺省回退深夜配色 */
+  palette: Record<string, string>;
 }
 
 type ChapterPayload = RouteChapterPayload | CardChapterPayload;
@@ -103,7 +202,8 @@ type ChapterPayload = RouteChapterPayload | CardChapterPayload;
 async function buildChapters(year: number): Promise<ChapterPayload[]> {
   const review = await computeYearReview(year);
   if (!review) return [];
-  const theme = THEMES.tech;
+  const theme = THEMES[activeThemeId()];
+  const palette = cardPalette(theme);
   const out: ChapterPayload[] = [];
 
   // 1 片头数据卡
@@ -119,6 +219,7 @@ async function buildChapters(year: number): Promise<ChapterPayload[]> {
     titleName: review.title.name,
     titleDesc: review.title.desc.replace(/<br\s*\/?>/g, ' · '),
     months: review.months,
+    palette,
   });
 
   // 2 高光路线
@@ -184,6 +285,7 @@ async function buildChapters(year: number): Promise<ChapterPayload[]> {
     titleName: review.title.name,
     titleDesc: review.title.desc.replace(/<br\s*\/?>/g, ' · '),
     months: review.months,
+    palette,
   });
 
   return out;
@@ -204,6 +306,7 @@ export async function exportYearReviewVideo(year: number): Promise<void> {
   const report = $('export-report');
   const ring = $('export-ring');
   const eyebrow = $('export-eyebrow');
+  let previewToken: string | null = null;
   overlay.hidden = false;
   if (ring) ring.style.display = '';
   if (eyebrow) eyebrow.style.display = '';
@@ -238,6 +341,9 @@ export async function exportYearReviewVideo(year: number): Promise<void> {
       height: 1920,
       fps: 30,
       bitrate: 4_000_000,
+      // 预览模式：原生侧只编码不落 MediaStore，把 mp4 留在缓存里，
+      // 由这里拉回来先给用户过目，播完再自动保存。
+      preview: true,
       chapters,
     };
     if (audio) payload.audio = audio;
@@ -283,19 +389,39 @@ export async function exportYearReviewVideo(year: number): Promise<void> {
       seconds?: number;
       chapters?: number;
       uri?: string;
+      previewToken?: string;
     };
     if (!result.ok) throw new Error(result.error ?? '原生渲染失败');
     overlay.hidden = true;
-    const note = result.audioNote ? `（音乐混流失败已回退静音：${result.audioNote}）` : '';
-    showToast(`年度回顾视频已保存到 Download/FIT Motion${note}`);
-    console.info('[fit-motion] year review video', result);
+    if (!result.previewToken) {
+      // 旧版原生桥不支持预览模式：文件已经直接落盘，按老行为提示
+      const note = result.audioNote ? `（音乐混流失败已回退静音：${result.audioNote}）` : '';
+      showToast(`年度回顾视频已保存到 Download/FIT Motion${note}`);
+      return;
+    }
+    status.textContent = '正在取回视频…';
+    overlay.hidden = false;
+    previewToken = result.previewToken;
+    const videoRes = await fetch(`${base}/video?t=${encodeURIComponent(result.previewToken)}`, {
+      mode: 'cors',
+      signal: abortController?.signal,
+    });
+    if (!videoRes.ok) throw new Error(`预览视频获取失败（HTTP ${videoRes.status}）`);
+    const blob = await videoRes.blob();
+    openVideoPreview(blob, result.previewToken, year);
+    console.info('[fit-motion] year review video preview ready', result);
   } catch (error) {
     overlay.hidden = true;
+    // 预览没开成（拉取失败等）：把原生侧的缓存 mp4 清掉，别留垃圾
+    if (previewToken && !preview) {
+      void fetch(`${base}/discard?t=${encodeURIComponent(previewToken)}`, { method: 'POST', mode: 'cors' }).catch(() => { });
+    }
     const message = (error as Error)?.name === 'AbortError' ? '年度回顾视频导出已取消。'
       : `年度回顾视频生成失败：${(error as Error)?.message ?? error}`;
     showToast(message, (error as Error)?.name !== 'AbortError');
   } finally {
     abortController = null;
-    busy = false;
+    // 预览还开着就不放行下一次导出，直到保存/关闭
+    busy = preview !== null;
   }
 }

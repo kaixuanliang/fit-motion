@@ -5,8 +5,8 @@
  * 这里只负责呈现与导出。卡片数量按数据自适应（没有常骑路线/最长单骑时
  * 跳过对应卡），翻页支持左右滑动和方向键。
  *
- * 视觉取「年度报告」质感：深夜底色 + 荧光绿主色，不跟随明暗主题 —— 这页
- * 是仪式感优先的内容页，固定配色反而稳定。
+ * 视觉跟随明暗主题（--page/--card/--accent 等变量），亮色主题下整页
+ * 翻成亮色；成绩图导出同样在运行时读取主题变量取色。
  */
 
 import { computeYearReview, distanceAnalogy, type RidePeak, type YearReview } from '../stats/year-review';
@@ -115,10 +115,11 @@ function miniRouteSvg(sketch: Array<{ lat: number; lon: number }>): string {
   const d = pts.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ');
   const [sx, sy] = pts[0];
   const [ex, ey] = pts[pts.length - 1];
+  // 颜色由 CSS 类驱动（.yr-mini svg .route/.start/.end），跟随主题
   return `<svg viewBox="0 0 ${W} ${H}">
-    <path d="${d}" fill="none" stroke="#d8ff3e" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
-    <circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="5" fill="#fff"/>
-    <circle cx="${ex.toFixed(1)}" cy="${ey.toFixed(1)}" r="5" fill="#e8b84a"/>
+    <path class="route" d="${d}"/>
+    <circle class="start" cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="5"/>
+    <circle class="end" cx="${ex.toFixed(1)}" cy="${ey.toFixed(1)}" r="5"/>
   </svg>`;
 }
 
@@ -136,6 +137,8 @@ function barGroup(values: number[], labels: string[], topText: (value: number) =
 /**
  * 骑行日历：53 周 × 7 天的里程热力格。一列一周，周一在最上，
  * 颜色越亮当天骑得越远 —— 一眼看出「哪几个月在骑」。
+ * 格子颜色走 CSS 类（.yr-heat rect.h0~h3），跟随主题；
+ * 类名同时解决 base.css 全局 svg 描边污染小格子的问题。
  */
 function heatmapBlock(review: YearReview): string {
   const cell = 5.4;
@@ -151,12 +154,8 @@ function heatmapBlock(review: YearReview): string {
     const row = slot % 7;
     if (col > 52) continue;
     const ratio = meters / max;
-    const fill = meters <= 0
-      ? 'rgba(255,255,255,0.06)'
-      : ratio > 0.66 ? 'rgba(216,255,62,0.95)'
-        : ratio > 0.33 ? 'rgba(216,255,62,0.58)'
-          : 'rgba(216,255,62,0.3)';
-    rects.push(`<rect x="${(col * step).toFixed(1)}" y="${(row * step).toFixed(1)}" width="${cell}" height="${cell}" rx="1.4" fill="${fill}"/>`);
+    const level = meters <= 0 ? 'h0' : ratio > 0.66 ? 'h3' : ratio > 0.33 ? 'h2' : 'h1';
+    rects.push(`<rect class="${level}" x="${(col * step).toFixed(1)}" y="${(row * step).toFixed(1)}" width="${cell}" height="${cell}" rx="1.4"/>`);
   }
   const width = 53 * step - gap;
   const height = 7 * step - gap;
@@ -187,8 +186,8 @@ function buildCards(review: YearReview): string[] {
     <div class="yr-year">${review.year}</div>
     <div class="yr-title">我的骑行年度</div>
     <svg class="yr-deco" viewBox="0 0 240 80">
-      <path d="M8 62 C 40 20, 70 70, 104 40 S 170 8, 200 34 S 228 58, 232 50" fill="none" stroke="#d8ff3e" stroke-width="3" stroke-linecap="round"/>
-      <circle cx="8" cy="62" r="4" fill="#fff"/><circle cx="232" cy="50" r="4" fill="#e8b84a"/>
+      <path class="line" d="M8 62 C 40 20, 70 70, 104 40 S 170 8, 200 34 S 228 58, 232 50"/>
+      <circle class="start" cx="8" cy="62" r="4"/><circle class="end" cx="232" cy="50" r="4"/>
     </svg>
     <div class="yr-cover-stats">
       <div><b>${fmtKm(review.totalMeters)}</b><i>公里</i></div>
@@ -425,18 +424,49 @@ $('yr-screen').addEventListener('touchend', (event) => {
 
 /* ── 年度成绩图（1080×1920 PNG）───────────────────────────── */
 
-const INK = '#f4f7ee';
-const DEEP = '#0d1f2d';
-const DEEP2 = '#12384a';
-const LIME = '#d8ff3e';
-const GOLD = '#e8b84a';
 const SANS = '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif';
+
+interface PosterPalette {
+  pageTop: string;
+  pageMid: string;
+  pageBottom: string;
+  ink: string;
+  muted: string;
+  faint: string;
+  accent: string;
+  warn: string;
+  panel: string;
+  panelLine: string;
+  accentSoft: string;
+}
+
+/** 运行时读取主题 CSS 变量取色：导出图与当前主题观感一致。 */
+function posterPalette(): PosterPalette {
+  const styles = getComputedStyle(document.documentElement);
+  const v = (name: string, fallback: string): string => styles.getPropertyValue(name).trim() || fallback;
+  const page = v('--page', '#04060a');
+  const card = v('--card', '#11171b');
+  return {
+    pageTop: v('--card-2', card),
+    pageMid: page,
+    pageBottom: v('--bg-soft', page),
+    ink: v('--text', '#f3f7ee'),
+    muted: v('--muted', '#8d9c96'),
+    faint: v('--dim', '#5c6a65'),
+    accent: v('--accent', '#b4e64a'),
+    warn: v('--warn', '#e0a458'),
+    panel: card,
+    panelLine: v('--line-strong', 'rgba(255,255,255,0.18)'),
+    accentSoft: v('--accent-soft', 'rgba(180,230,74,0.12)'),
+  };
+}
 
 async function exportYearImage(review: YearReview): Promise<void> {
   if (busy) return;
   busy = true;
   try {
     showToast('正在生成年度成绩图…');
+    const pal = posterPalette();
     const W = 1080;
     const H = 1920;
     const canvas = document.createElement('canvas');
@@ -446,48 +476,48 @@ async function exportYearImage(review: YearReview): Promise<void> {
     if (!ctx) throw new Error('无法创建画布');
 
     const bg = ctx.createLinearGradient(0, 0, 0, H);
-    bg.addColorStop(0, DEEP2);
-    bg.addColorStop(0.55, DEEP);
-    bg.addColorStop(1, '#08131c');
+    bg.addColorStop(0, pal.pageTop);
+    bg.addColorStop(0.55, pal.pageMid);
+    bg.addColorStop(1, pal.pageBottom);
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, W, H);
 
     const pad = 72;
     const accentLine = (x: number, y: number): void => {
-      ctx.fillStyle = LIME;
+      ctx.fillStyle = pal.accent;
       ctx.fillRect(x, y, 34, 4);
     };
 
     // 顶部品牌 + 年份
     ctx.textBaseline = 'alphabetic';
-    ctx.fillStyle = 'rgba(216,255,62,0.85)';
+    ctx.fillStyle = pal.accent;
     ctx.font = `600 26px ${SANS}`;
     ctx.fillText('F I T   M O T I O N   ·   年 度 回 顾', pad, 118);
     const yearGrad = ctx.createLinearGradient(0, 140, 0, 340);
-    yearGrad.addColorStop(0, '#ffffff');
-    yearGrad.addColorStop(1, LIME);
+    yearGrad.addColorStop(0, pal.ink);
+    yearGrad.addColorStop(1, pal.accent);
     ctx.fillStyle = yearGrad;
     ctx.font = `700 200px ${SANS}`;
     ctx.fillText(String(review.year), pad - 4, 316);
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.fillStyle = pal.muted;
     ctx.font = `500 30px ${SANS}`;
     ctx.fillText('我的骑行年度', pad, 376);
 
     // 主数据：总里程
     let y = 500;
     accentLine(pad, y - 44);
-    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fillStyle = pal.muted;
     ctx.font = `500 24px ${SANS}`;
     ctx.fillText('年度总里程', pad, y - 58);
-    ctx.fillStyle = INK;
+    ctx.fillStyle = pal.ink;
     ctx.font = `700 150px ${SANS}`;
     const kmText = fmtKm(review.totalMeters);
     ctx.fillText(kmText, pad, y + 82);
     const kmWidth = ctx.measureText(kmText).width;
-    ctx.fillStyle = LIME;
+    ctx.fillStyle = pal.accent;
     ctx.font = `500 40px ${SANS}`;
     ctx.fillText('公里', pad + kmWidth + 18, y + 82);
-    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fillStyle = pal.muted;
     ctx.font = `400 26px ${SANS}`;
     ctx.fillText(distanceAnalogy(review.totalMeters / 1000), pad, y + 138);
 
@@ -508,21 +538,21 @@ async function exportYearImage(review: YearReview): Promise<void> {
       const row = Math.floor(i / gridCols);
       const x = pad + col * (gridW + 24);
       const top = y + row * 150;
-      ctx.fillStyle = 'rgba(255,255,255,0.06)';
-      ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+      ctx.fillStyle = pal.panel;
+      ctx.strokeStyle = pal.panelLine;
       ctx.lineWidth = 1.4;
       ctx.beginPath();
       ctx.roundRect(x, top, gridW, 126, 20);
       ctx.fill();
       ctx.stroke();
-      ctx.fillStyle = INK;
+      ctx.fillStyle = pal.ink;
       ctx.font = `700 52px ${SANS}`;
       ctx.fillText(value, x + 24, top + 62);
       const vw = ctx.measureText(value).width;
-      ctx.fillStyle = GOLD;
+      ctx.fillStyle = pal.warn;
       ctx.font = `500 24px ${SANS}`;
       ctx.fillText(unit, x + 30 + vw, top + 62);
-      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      ctx.fillStyle = pal.muted;
       ctx.font = `400 22px ${SANS}`;
       ctx.fillText(label, x + 24, top + 100);
     });
@@ -530,7 +560,7 @@ async function exportYearImage(review: YearReview): Promise<void> {
     // 月度柱状图
     y += 380;
     accentLine(pad, y - 44);
-    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fillStyle = pal.muted;
     ctx.font = `500 24px ${SANS}`;
     ctx.fillText('月度分布', pad, y - 58);
     const maxMonth = Math.max(...review.months);
@@ -542,18 +572,18 @@ async function exportYearImage(review: YearReview): Promise<void> {
       review.months.forEach((v, i) => {
         const x = pad + i * (barW + 10);
         const h = v > 0 ? Math.max(6, (v / maxMonth) * chartH) : 4;
-        ctx.fillStyle = i === topMonth ? LIME : 'rgba(216,255,62,0.22)';
+        ctx.fillStyle = i === topMonth ? pal.accent : pal.accentSoft;
         ctx.beginPath();
         ctx.roundRect(x, chartTop + chartH - h, barW, h, 6);
         ctx.fill();
-        ctx.fillStyle = i === topMonth ? LIME : 'rgba(255,255,255,0.4)';
+        ctx.fillStyle = i === topMonth ? pal.accent : pal.faint;
         ctx.font = `400 19px ${SANS}`;
         ctx.textAlign = 'center';
         ctx.fillText(`${i + 1}`, x + barW / 2, chartTop + chartH + 30);
         ctx.textAlign = 'left';
       });
       const topX = pad + topMonth * (barW + 10) + barW / 2;
-      ctx.fillStyle = LIME;
+      ctx.fillStyle = pal.accent;
       ctx.font = `600 22px ${SANS}`;
       ctx.textAlign = 'center';
       ctx.fillText(`${fmtKm(maxMonth)} km`, topX, chartTop + chartH - Math.max(6, (maxMonth / maxMonth) * chartH) - 12);
@@ -564,15 +594,15 @@ async function exportYearImage(review: YearReview): Promise<void> {
     // 最长单骑迷你路线
     if (review.longest && review.longest.sketch.length >= 2) {
       accentLine(pad, y - 44);
-      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.fillStyle = pal.muted;
       ctx.font = `500 24px ${SANS}`;
       ctx.fillText('最长单骑', pad, y - 58);
       const boxX = pad;
       const boxY = y + 4;
       const boxW = W - pad * 2;
       const boxH = 200;
-      ctx.fillStyle = 'rgba(255,255,255,0.05)';
-      ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+      ctx.fillStyle = pal.panel;
+      ctx.strokeStyle = pal.panelLine;
       ctx.beginPath();
       ctx.roundRect(boxX, boxY, boxW, boxH, 24);
       ctx.fill();
@@ -590,7 +620,7 @@ async function exportYearImage(review: YearReview): Promise<void> {
       const scale = Math.min((boxW - inner * 2) / spanLon, (boxH - inner * 2) / spanLat);
       const offX = (boxW - spanLon * scale) / 2;
       const offY = (boxH - spanLat * scale) / 2;
-      ctx.strokeStyle = LIME;
+      ctx.strokeStyle = pal.accent;
       ctx.lineWidth = 6;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
@@ -610,14 +640,14 @@ async function exportYearImage(review: YearReview): Promise<void> {
         ctx.arc(boxX + offX + (p.lon - minLon) * scale, boxY + boxH - (offY + (p.lat - minLat) * scale), 10, 0, Math.PI * 2);
         ctx.fill();
       };
-      dot(first, '#ffffff');
-      dot(last, GOLD);
+      dot(first, pal.ink);
+      dot(last, pal.warn);
 
       const l = review.longest;
-      ctx.fillStyle = INK;
+      ctx.fillStyle = pal.ink;
       ctx.font = `600 32px ${SANS}`;
       ctx.fillText(`${fmtKm(l.meters)} 公里`, boxX + 28, boxY + 52);
-      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.fillStyle = pal.muted;
       ctx.font = `400 24px ${SANS}`;
       ctx.fillText(`${fmtDate(l.date)} · ${l.name}${l.days > 1 ? ` · 跨 ${l.days} 天` : ''}`, boxX + 28, boxY + 92);
       y += boxH + 44;
@@ -625,18 +655,18 @@ async function exportYearImage(review: YearReview): Promise<void> {
 
     // 称号 + 底部
     ctx.textAlign = 'center';
-    ctx.fillStyle = GOLD;
+    ctx.fillStyle = pal.warn;
     ctx.font = `400 26px ${SANS}`;
     ctx.fillText('年度称号', W / 2, y + 46);
-    ctx.fillStyle = LIME;
+    ctx.fillStyle = pal.accent;
     ctx.font = `700 62px ${SANS}`;
     ctx.fillText(`${review.title.name}`, W / 2, y + 118);
-    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fillStyle = pal.muted;
     ctx.font = `400 24px ${SANS}`;
     ctx.fillText(review.title.desc.replace(/<br\s*\/?>/g, ' · '), W / 2, y + 168);
     ctx.textAlign = 'left';
 
-    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.fillStyle = pal.faint;
     ctx.font = `400 22px ${SANS}`;
     ctx.fillText('FIT MOTION · YEAR IN MOTION', pad, H - 56);
 

@@ -3026,9 +3026,15 @@ final class NativeRenderJob {
             response.put("frames", totalFramesAll);
             response.put("tileLoadMs", tileLoadMs);
             File result = mixAudioIfNeeded(context, payload, encoded, response);
-            String uri = NativeFrameServer.saveNativeVideo(context, result);
-            result.delete();
-            response.put("uri", uri);
+            if (payload.optBoolean("preview", false)) {
+                // 预览模式：不写 MediaStore，把 mp4 留在缓存里由 /video 端点
+                // 供 WebView 拉取，用户看完（自动保存）或关闭后 /discard 清理。
+                response.put("previewToken", result.getName());
+            } else {
+                String uri = NativeFrameServer.saveNativeVideo(context, result);
+                result.delete();
+                response.put("uri", uri);
+            }
             response.put("seconds", elapsed / 1000.0);
             return response;
         } catch (Exception error) {

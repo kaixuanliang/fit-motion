@@ -30,6 +30,7 @@ import java.nio.FloatBuffer;
  * 必须在持有 EGL 上下文的渲染线程创建与释放（release()）。
  */
 final class NativeCardScene implements NativeScene {
+    /** 缺省调色板（payload 未带 palette 时的回退，保持旧观感）。 */
     private static final int INK = 0xFFF4F7EE;
     private static final int LIME = 0xFFD8FF3E;
     private static final int GOLD = 0xFFE8B84A;
@@ -40,6 +41,12 @@ final class NativeCardScene implements NativeScene {
     private final int height;
     private final int fps;
     private final boolean opening;
+    /** 主题调色板：JS 侧按当前 data-theme 传（ink/accent/warn/bgTop/bgBottom）。 */
+    private final int ink;
+    private final int accent;
+    private final int warn;
+    private final int bgTop;
+    private final int bgBottom;
     private final int year;
     private final double totalMeters;
     private final int rideDays;
@@ -74,6 +81,12 @@ final class NativeCardScene implements NativeScene {
         this.fps = fps;
         this.opening = !"closing".equals(chapter.optString("cardKind", "opening"));
         this.year = chapter.optInt("year", 2025);
+        JSONObject palette = chapter.optJSONObject("palette");
+        this.ink = colorOf(palette, "ink", INK);
+        this.accent = colorOf(palette, "accent", LIME);
+        this.warn = colorOf(palette, "warn", GOLD);
+        this.bgTop = colorOf(palette, "bgTop", BG_TOP);
+        this.bgBottom = colorOf(palette, "bgBottom", BG_BOTTOM);
         this.totalMeters = chapter.optDouble("totalMeters", 0);
         this.rideDays = chapter.optInt("rideDays", 0);
         this.rides = chapter.optInt("rides", 0);
@@ -86,6 +99,20 @@ final class NativeCardScene implements NativeScene {
                 months[i] = (float) array.optDouble(i, 0);
             }
         }
+    }
+
+    /** "#rrggbb" → ARGB int，解析失败回退 fallback。 */
+    private static int colorOf(JSONObject palette, String key, int fallback) {
+        if (palette == null) return fallback;
+        try {
+            return android.graphics.Color.parseColor(palette.optString(key, ""));
+        } catch (Exception ignored) {
+            return fallback;
+        }
+    }
+
+    private static int withAlpha(int color, int alpha) {
+        return (color & 0x00FFFFFF) | (alpha << 24);
     }
 
     @Override
@@ -107,9 +134,9 @@ final class NativeCardScene implements NativeScene {
         // 年份：从下方轻轻推上来
         textAlpha = fade(p, 0.02f, 0.16f);
         if (textAlpha > 0) {
-            centered("FIT MOTION · 年度回顾", height * 0.29f, 34, LIME, 12, null, 0.9f);
-            centered(String.valueOf(year), height * 0.40f, 168, INK, 4, null, 1f);
-            centered("我的骑行年度", height * 0.445f, 38, 0xB3FFFFFF, 10, null, 1f);
+            centered("FIT MOTION · 年度回顾", height * 0.29f, 34, accent, 12, null, 0.9f);
+            centered(String.valueOf(year), height * 0.40f, 168, ink, 4, null, 1f);
+            centered("我的骑行年度", height * 0.445f, 38, withAlpha(ink, 0xB3), 10, null, 1f);
         }
 
         // 总里程：数字滚动
@@ -118,9 +145,9 @@ final class NativeCardScene implements NativeScene {
         float alpha = fade(p, 0.10f, 0.24f);
         if (alpha > 0) {
             textAlpha = alpha;
-            centered("年度总里程", height * 0.545f, 32, 0x99FFFFFF, 8, null, 1f);
-            centered(kmText, height * 0.625f, 176, LIME, 2, null, 1f);
-            centered("公里", height * 0.665f, 34, INK, 10, null, 0.8f);
+            centered("年度总里程", height * 0.545f, 32, withAlpha(ink, 0x99), 8, null, 1f);
+            centered(kmText, height * 0.625f, 176, accent, 2, null, 1f);
+            centered("公里", height * 0.665f, 34, ink, 10, null, 0.8f);
         }
 
         // 副行数据
@@ -129,19 +156,19 @@ final class NativeCardScene implements NativeScene {
             textAlpha = meta;
             String line = rideDays + " 天在路上 · " + rides + " 次出发";
             if (climbM >= 100) line += " · 爬升 " + number(climbM, 0) + " 米";
-            centered(line, height * 0.715f, 34, 0xC8FFFFFF, 2, null, 1f);
+            centered(line, height * 0.715f, 34, withAlpha(ink, 0xC8), 2, null, 1f);
         }
 
         // 称号
         float badge = fade(p, 0.60f, 0.78f);
         if (badge > 0 && !titleName.isEmpty()) {
             textAlpha = badge;
-            centered("年度称号", height * 0.795f, 26, GOLD, 8, null, 1f);
-            centered(titleName, height * 0.845f, 66, INK, 6, null, 1f);
+            centered("年度称号", height * 0.795f, 26, warn, 8, null, 1f);
+            centered(titleName, height * 0.845f, 66, ink, 6, null, 1f);
         }
 
         textAlpha = 0.35f * fade(p, 0.2f, 0.5f);
-        centered("FIT MOTION · YEAR IN MOTION", height * 0.94f, 24, INK, 8, null, 1f);
+        centered("FIT MOTION · YEAR IN MOTION", height * 0.94f, 24, ink, 8, null, 1f);
 
         fadeEdges(p, 0.06f, 0.1f);
     }
@@ -153,8 +180,8 @@ final class NativeCardScene implements NativeScene {
         float head = fade(p, 0.00f, 0.14f);
         if (head > 0) {
             textAlpha = head;
-            centered(String.valueOf(year), height * 0.115f, 46, LIME, 10, null, 0.9f);
-            centered("月度节奏", height * 0.165f, 44, INK, 12, null, 1f);
+            centered(String.valueOf(year), height * 0.115f, 46, accent, 10, null, 0.9f);
+            centered("月度节奏", height * 0.165f, 44, ink, 12, null, 1f);
         }
 
         // 12 根柱子：自适应宽度
@@ -179,46 +206,46 @@ final class NativeCardScene implements NativeScene {
             float ratio = months[i] / max;
             float bh = Math.max(height * 0.004f, chartH * ratio * easeOut(grow));
             float x = left + i * (barW + gap);
-            bar.setColor(i == topMonth ? LIME : 0x3AD8FF3E);
+            bar.setColor(i == topMonth ? accent : withAlpha(accent, 0x3A));
             rectF.set(x, baseline - bh, x + barW, baseline);
             canvas.drawRoundRect(rectF, barW * 0.28f, barW * 0.28f, bar);
 
             textAlpha = 0.55f * grow;
-            Paint label = textPaint(24, i == topMonth ? LIME : 0x80FFFFFF, 0);
+            Paint label = textPaint(24, i == topMonth ? accent : withAlpha(ink, 0x80), 0);
             canvas.drawText(String.valueOf(i + 1), x + barW / 2f, baseline + height * 0.026f, label);
         }
         // 最高月数值
         float topX = left + topMonth * (barW + gap) + barW / 2f;
         textAlpha = fade(p, 0.35f, 0.48f);
-        Paint peak = textPaint(26, LIME, 0);
+        Paint peak = textPaint(26, accent, 0);
         peak.setTextAlign(Paint.Align.CENTER);
         float peakH = chartH * (months[topMonth] / max);
         canvas.drawText(number(months[topMonth] / 1000.0, 0) + " km", topX,
                 baseline - peakH - height * 0.014f, peak);
 
         textAlpha = 0.45f;
-        leftText("月度里程（公里）", left, baseline + height * 0.056f, 22, INK);
+        leftText("月度里程（公里）", left, baseline + height * 0.056f, 22, ink);
 
         // 累计里程
         float total = fade(p, 0.28f, 0.52f);
         if (total > 0) {
             textAlpha = total;
             double km = totalMeters / 1000.0 * easeOut(Math.min(1f, (p - 0.28f) / 0.42f));
-            centered(number(km, 0) + " 公里", height * 0.715f, 96, INK, 4, null, 1f);
+            centered(number(km, 0) + " 公里", height * 0.715f, 96, ink, 4, null, 1f);
             textAlpha = 0.6f * total;
-            centered(rideDays + " 天在路上 · " + rides + " 次出发", height * 0.755f, 30, INK, 2, null, 1f);
+            centered(rideDays + " 天在路上 · " + rides + " 次出发", height * 0.755f, 30, ink, 2, null, 1f);
         }
 
         // 称号落版
         float badge = fade(p, 0.55f, 0.72f);
         if (badge > 0 && !titleName.isEmpty()) {
             textAlpha = badge;
-            centered(titleName, height * 0.825f, 58, LIME, 6, null, 1f);
+            centered(titleName, height * 0.825f, 58, accent, 6, null, 1f);
             textAlpha = 0.55f * badge;
-            centered(titleDesc, height * 0.862f, 26, INK, 1, null, 1f);
+            centered(titleDesc, height * 0.862f, 26, ink, 1, null, 1f);
         }
         textAlpha = 0.32f * fade(p, 0.6f, 0.8f);
-        centered("FIT MOTION · YEAR IN MOTION", height * 0.94f, 24, INK, 8, null, 1f);
+        centered("FIT MOTION · YEAR IN MOTION", height * 0.94f, 24, ink, 8, null, 1f);
 
         fadeEdges(p, 0.04f, 0.10f);
     }
@@ -229,9 +256,9 @@ final class NativeCardScene implements NativeScene {
 
     private void paintBackground() {
         if (bg == null) {
-            bg = new LinearGradient(0, 0, 0, height, BG_TOP, BG_BOTTOM, Shader.TileMode.CLAMP);
+            bg = new LinearGradient(0, 0, 0, height, bgTop, bgBottom, Shader.TileMode.CLAMP);
             glow = new RadialGradient(width * 0.86f, -height * 0.04f, height * 0.52f,
-                    new int[]{0x3FD8FF3E, 0x00000000}, new float[]{0f, 1f}, Shader.TileMode.CLAMP);
+                    new int[]{withAlpha(accent, 0x3F), 0x00000000}, new float[]{0f, 1f}, Shader.TileMode.CLAMP);
         }
         Paint fill = reuse();
         fill.setShader(bg);
@@ -242,9 +269,9 @@ final class NativeCardScene implements NativeScene {
         // 装饰圆环，压住右上角的空
         fill.setStyle(Paint.Style.STROKE);
         fill.setStrokeWidth(2f);
-        fill.setColor(0x1FD8FF3E);
+        fill.setColor(withAlpha(accent, 0x1F));
         canvas.drawCircle(width * 0.86f, -height * 0.02f, height * 0.30f, fill);
-        fill.setColor(0x12D8FF3E);
+        fill.setColor(withAlpha(accent, 0x12));
         canvas.drawCircle(width * 0.86f, -height * 0.02f, height * 0.40f, fill);
         fill.setStyle(Paint.Style.FILL);
     }

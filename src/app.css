@@ -3061,9 +3061,11 @@ html.gl-preview #stage-canvas {
 }
 
 /* ── 年度骑行回顾（Wrapped 式全屏翻卡）────────────────────── */
-/* 这页是仪式感优先的内容页：固定深夜配色，不跟随明暗主题 */
+/* 配色全部走主题变量：跟随明暗主题，三套主题下各自成立。
+   rgba(var(--yr-scrim), a) 里的 scrim 是每套主题的「底色 RGB」，
+   用于半透明叠层（导航渐隐、关闭按钮底、热力图空格）。 */
 
-/* 记录页的年度回顾入口：一张深色横幅卡排在列表最上方。
+/* 记录页的年度回顾入口：一张主题色横幅卡排在列表最上方。
    顶栏留给筛选与统计这些工具，内容入口做成卡，滚动时自然让位。 */
 .yr-banner {
   position: relative;
@@ -3074,11 +3076,11 @@ html.gl-preview #stage-canvas {
   width: 100%;
   padding: 15px 16px 15px 18px;
   border-radius: 20px;
-  border: 1px solid rgba(216, 255, 62, 0.22);
+  border: 1px solid var(--accent-line);
   background:
-    radial-gradient(130% 190% at 92% -30%, rgba(216, 255, 62, 0.24), rgba(216, 255, 62, 0) 62%),
-    linear-gradient(135deg, #16465c 0%, #0e2735 58%, #0a1a24 100%);
-  color: #fff;
+    radial-gradient(130% 190% at 92% -30%, var(--accent-soft), transparent 62%),
+    linear-gradient(135deg, var(--card-2) 0%, var(--card) 58%, var(--bg-soft) 100%);
+  color: var(--text);
   text-align: left;
   font-family: inherit;
   overflow: hidden;
@@ -3093,8 +3095,8 @@ html.gl-preview #stage-canvas {
   width: 140px;
   height: 140px;
   border-radius: 50%;
-  border: 1px solid rgba(216, 255, 62, 0.16);
-  box-shadow: 0 0 0 18px rgba(216, 255, 62, 0.05), 0 0 0 42px rgba(216, 255, 62, 0.028);
+  border: 1px solid var(--accent-line);
+  box-shadow: 0 0 0 18px var(--accent-soft);
   pointer-events: none;
 }
 .yr-banner:active { transform: scale(0.99); }
@@ -3115,9 +3117,9 @@ html.gl-preview #stage-canvas {
   font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 2px;
-  color: rgba(216, 255, 62, 0.9);
+  color: var(--accent);
 }
-.yr-banner-eyebrow b { font-size: 11px; letter-spacing: 1px; color: #fff; }
+.yr-banner-eyebrow b { font-size: 11px; letter-spacing: 1px; color: var(--text); }
 .yr-banner-eyebrow svg {
   width: 12px;
   height: 12px;
@@ -3135,8 +3137,8 @@ html.gl-preview #stage-canvas {
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
 }
-.yr-banner-num i { font-style: normal; font-size: 11px; color: rgba(216, 255, 62, 0.85); }
-.yr-banner-meta { font-size: 11px; color: rgba(255, 255, 255, 0.55); letter-spacing: 0.4px; }
+.yr-banner-num i { font-style: normal; font-size: 11px; color: var(--accent); }
+.yr-banner-meta { font-size: 11px; color: var(--muted); letter-spacing: 0.4px; }
 .yr-banner-go {
   position: relative;
   z-index: 1;
@@ -3144,7 +3146,8 @@ html.gl-preview #stage-canvas {
   width: 30px;
   height: 30px;
   border-radius: 50%;
-  background: rgba(216, 255, 62, 0.14);
+  background: var(--accent-soft);
+  color: var(--accent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3153,7 +3156,7 @@ html.gl-preview #stage-canvas {
   width: 15px;
   height: 15px;
   fill: none;
-  stroke: #d8ff3e;
+  stroke: currentColor;
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -3161,10 +3164,16 @@ html.gl-preview #stage-canvas {
 }
 
 .yr-overlay {
+  --yr-scrim: 8, 12, 16;
+  --yr-heat-empty: rgba(255, 255, 255, 0.09);
   position: fixed;
   inset: 0;
   z-index: 90;
-  background: #0b0f13;
+  background: var(--page);
+}
+:root[data-theme="bright"] .yr-overlay {
+  --yr-scrim: 244, 242, 231;
+  --yr-heat-empty: rgba(23, 34, 43, 0.1);
 }
 .yr-screen {
   position: absolute;
@@ -3172,7 +3181,7 @@ html.gl-preview #stage-canvas {
   max-width: 560px;
   margin: 0 auto;
   overflow: hidden;
-  background: radial-gradient(120% 90% at 50% 0%, #12384a 0%, #0f2a38 70%);
+  background: radial-gradient(120% 90% at 50% 0%, var(--card-2) 0%, var(--page) 70%);
   touch-action: pan-y;
 }
 .yr-close {
@@ -3183,9 +3192,9 @@ html.gl-preview #stage-canvas {
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  background: rgba(11, 15, 19, 0.4);
-  color: #fff;
+  border: 1px solid var(--line-strong);
+  background: rgba(var(--yr-scrim), 0.4);
+  color: var(--text);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3216,7 +3225,7 @@ html.gl-preview #stage-canvas {
   pointer-events: none;
   transition: opacity 0.38s ease, transform 0.38s ease;
   overflow: hidden;
-  color: #fff;
+  color: var(--text);
 }
 .yr-card.active {
   opacity: 1;
@@ -3240,7 +3249,7 @@ html.gl-preview #stage-canvas {
   gap: 13px;
   padding: calc(110px + env(safe-area-inset-top)) 34px calc(130px + env(safe-area-inset-bottom));
   text-align: center;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--muted);
   font-size: 13px;
   letter-spacing: 0.6px;
 }
@@ -3248,20 +3257,20 @@ html.gl-preview #stage-canvas {
   width: 34px;
   height: 34px;
   border-radius: 50%;
-  border: 3px solid rgba(216, 255, 62, 0.22);
-  border-top-color: #d8ff3e;
+  border: 3px solid var(--accent-soft);
+  border-top-color: var(--accent);
   animation: yr-spin 0.9s linear infinite;
 }
-.yr-loading b { font-size: 16px; font-weight: 600; color: #fff; letter-spacing: 1.2px; }
-.yr-loading i { font-style: normal; font-size: 11.5px; color: rgba(255, 255, 255, 0.42); letter-spacing: 0.6px; }
-.yr-loading.empty { font-size: 14px; color: rgba(255, 255, 255, 0.55); }
+.yr-loading b { font-size: 16px; font-weight: 600; color: var(--text); letter-spacing: 1.2px; }
+.yr-loading i { font-style: normal; font-size: 11.5px; color: var(--dim); letter-spacing: 0.6px; }
+.yr-loading.empty { font-size: 14px; color: var(--muted); }
 @keyframes yr-spin { to { transform: rotate(360deg); } }
 
 .yr-eyebrow {
   font-size: 11px;
   letter-spacing: 3px;
   font-weight: 600;
-  color: #d8ff3e;
+  color: var(--accent);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -3270,16 +3279,17 @@ html.gl-preview #stage-canvas {
   content: "";
   width: 18px;
   height: 2px;
-  background: #d8ff3e;
+  background: var(--accent);
 }
 .yr-eyebrow.center { justify-content: center; }
 /* 数据口径脚注：走文档流排在内容之后（原来是绝对定位贴底，
    骑行天数等面板一高就互相压住）。 */
 .yr-src {
   font-size: 10.5px;
-  color: rgba(216, 255, 62, 0.55);
+  color: var(--accent);
+  opacity: 0.72;
   letter-spacing: 0.4px;
-  border-top: 1px dashed rgba(216, 255, 62, 0.25);
+  border-top: 1px dashed var(--accent-line);
   padding-top: 7px;
   line-height: 1.5;
   margin-top: 12px;
@@ -3291,7 +3301,7 @@ html.gl-preview #stage-canvas {
   font-weight: 700;
   letter-spacing: 2px;
   line-height: 1;
-  background: linear-gradient(180deg, #fff 20%, #d8ff3e);
+  background: linear-gradient(180deg, var(--text) 20%, var(--accent));
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -3299,14 +3309,22 @@ html.gl-preview #stage-canvas {
 .yr-title {
   font-size: 25px;
   font-weight: 600;
-  color: #fff;
+  color: var(--text);
   letter-spacing: 8px;
 }
 .yr-deco { margin-top: 24px; width: 230px; opacity: 0.9; }
+.yr-deco .line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+.yr-deco .start { fill: var(--text); }
+.yr-deco .end { fill: var(--warn); }
 .yr-hint {
   margin-top: 28px;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--dim);
   letter-spacing: 2px;
   animation: yr-pulse 1.8s infinite;
 }
@@ -3316,25 +3334,25 @@ html.gl-preview #stage-canvas {
   font-size: 80px;
   font-weight: 700;
   line-height: 1;
-  color: #fff;
+  color: var(--text);
   margin-top: 16px;
 }
 .yr-big.small { font-size: 62px; }
 .yr-big small {
   font-size: 22px;
   font-weight: 500;
-  color: #d8ff3e;
+  color: var(--accent);
   margin-left: 6px;
 }
 .yr-cap {
   font-size: 15px;
-  color: rgba(255, 255, 255, 0.65);
+  color: var(--muted);
   margin-top: 8px;
   letter-spacing: 1px;
   line-height: 1.6;
 }
-.yr-cap.strong { font-size: 17px; color: #fff; margin-top: 14px; }
-.yr-cap.strong b { color: #d8ff3e; }
+.yr-cap.strong { font-size: 17px; color: var(--text); margin-top: 14px; }
+.yr-cap.strong b { color: var(--accent); }
 .yr-cap.big-gap { font-size: 20px; margin: 16px 0 4px; }
 
 .yr-stat-row {
@@ -3345,14 +3363,14 @@ html.gl-preview #stage-canvas {
 }
 .yr-stat {
   flex: 1;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--card);
+  border: 1px solid var(--line);
   border-radius: 14px;
   padding: 14px 12px;
 }
-.yr-stat .v { font-size: 25px; font-weight: 700; color: #fff; }
-.yr-stat .v i { font-style: normal; font-size: 12px; color: #e8b84a; margin-left: 2px; }
-.yr-stat .k { font-size: 11px; color: rgba(255, 255, 255, 0.5); margin-top: 4px; letter-spacing: 1px; }
+.yr-stat .v { font-size: 25px; font-weight: 700; color: var(--text); }
+.yr-stat .v i { font-style: normal; font-size: 12px; color: var(--warn); margin-left: 2px; }
+.yr-stat .k { font-size: 11px; color: var(--dim); margin-top: 4px; letter-spacing: 1px; }
 
 .yr-bars {
   display: flex;
@@ -3374,15 +3392,15 @@ html.gl-preview #stage-canvas {
   width: 100%;
   min-height: 2px;
   border-radius: 6px 6px 3px 3px;
-  background: rgba(216, 255, 62, 0.22);
+  background: var(--accent-soft);
   position: relative;
 }
-.yr-bar.top .col { background: linear-gradient(180deg, #d8ff3e, #9ec22e); }
-.yr-bar .m { font-size: 10px; color: rgba(255, 255, 255, 0.45); }
-.yr-bar.top .m { color: #d8ff3e; font-weight: 600; }
+.yr-bar.top .col { background: var(--accent); }
+.yr-bar .m { font-size: 10px; color: var(--dim); }
+.yr-bar.top .m { color: var(--accent); font-weight: 600; }
 .yr-bar .val {
   font-size: 9.5px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--muted);
   position: absolute;
   top: -16px;
   width: 100%;
@@ -3409,21 +3427,29 @@ html.gl-preview #stage-canvas {
   gap: 3px;
   padding: 12px 6px;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--card);
+  border: 1px solid var(--line);
 }
-.yr-cover-stats b { font-size: 20px; font-weight: 700; color: #fff; font-variant-numeric: tabular-nums; }
-.yr-cover-stats i { font-style: normal; font-size: 10px; color: rgba(216, 255, 62, 0.75); letter-spacing: 0.6px; }
+.yr-cover-stats b { font-size: 20px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.yr-cover-stats i { font-style: normal; font-size: 10px; color: var(--accent); letter-spacing: 0.6px; }
 
-/* 骑行日历热力图 */
+/* 骑行日历热力图。
+   rect 必须显式关掉描边：base.css 的全局 svg 规则（图标用）会给所有
+   SVG 后代继承 1.8px 的 currentColor 描边，5.4px 的小格子会被整个
+   涂成文字色，看起来就像「格子显示了背景色」。 */
 .yr-heat {
   margin: 16px 0 0;
   padding: 12px 12px 10px;
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--card);
+  border: 1px solid var(--line);
 }
 .yr-heat svg { display: block; width: 100%; height: auto; }
+.yr-heat svg rect { stroke: none; }
+.yr-heat svg rect.h0 { fill: var(--yr-heat-empty); }
+.yr-heat svg rect.h1 { fill: var(--accent); opacity: 0.3; }
+.yr-heat svg rect.h2 { fill: var(--accent); opacity: 0.6; }
+.yr-heat svg rect.h3 { fill: var(--accent); opacity: 0.95; }
 .yr-heat-legend {
   display: flex;
   align-items: center;
@@ -3431,26 +3457,26 @@ html.gl-preview #stage-canvas {
   gap: 4px;
   margin-top: 8px;
   font-size: 9px;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--dim);
 }
 .yr-heat-legend i { width: 8px; height: 8px; border-radius: 2px; }
-.yr-heat-legend .l0 { background: rgba(255, 255, 255, 0.06); }
-.yr-heat-legend .l1 { background: rgba(216, 255, 62, 0.3); }
-.yr-heat-legend .l2 { background: rgba(216, 255, 62, 0.58); }
-.yr-heat-legend .l3 { background: rgba(216, 255, 62, 0.95); }
+.yr-heat-legend .l0 { background: var(--yr-heat-empty); }
+.yr-heat-legend .l1 { background: var(--accent); opacity: 0.3; }
+.yr-heat-legend .l2 { background: var(--accent); opacity: 0.6; }
+.yr-heat-legend .l3 { background: var(--accent); opacity: 0.95; }
 .yr-streak {
   display: flex;
   align-items: baseline;
   gap: 6px;
   margin-top: 14px;
 }
-.yr-streak b { font-size: 30px; font-weight: 700; color: #d8ff3e; font-variant-numeric: tabular-nums; }
-.yr-streak span { font-size: 12px; color: rgba(255, 255, 255, 0.6); }
+.yr-streak b { font-size: 30px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+.yr-streak span { font-size: 12px; color: var(--muted); }
 .yr-streak i {
   margin-left: auto;
   font-style: normal;
   font-size: 10.5px;
-  color: rgba(255, 255, 255, 0.42);
+  color: var(--dim);
   letter-spacing: 0.3px;
 }
 
@@ -3460,25 +3486,25 @@ html.gl-preview #stage-canvas {
   position: relative;
   padding: 13px 15px;
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: var(--card);
+  border: 1px solid var(--line);
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 2px 10px;
 }
-.yr-peak .k { font-size: 11px; letter-spacing: 1px; color: rgba(255, 255, 255, 0.5); }
+.yr-peak .k { font-size: 11px; letter-spacing: 1px; color: var(--dim); }
 .yr-peak .v {
   grid-row: span 2;
   align-self: center;
   font-size: 27px;
   font-weight: 700;
-  color: #fff;
+  color: var(--text);
   font-variant-numeric: tabular-nums;
 }
-.yr-peak .v i { font-style: normal; font-size: 12px; color: #e8b84a; margin-left: 3px; }
+.yr-peak .v i { font-style: normal; font-size: 12px; color: var(--warn); margin-left: 3px; }
 .yr-peak .d {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.42);
+  color: var(--dim);
   grid-column: 1;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3487,14 +3513,15 @@ html.gl-preview #stage-canvas {
 .yr-window {
   margin-top: 14px;
   font-size: 11px;
-  color: rgba(216, 255, 62, 0.7);
+  color: var(--accent);
+  opacity: 0.85;
   letter-spacing: 0.4px;
 }
 
 /* 与去年对比 */
-.yr-big.small.up { color: #fff; }
-.yr-big.small.up small { color: #d8ff3e; }
-.yr-big.small.down small { color: #e8b84a; }
+.yr-big.small.up { color: var(--text); }
+.yr-big.small.up small { color: var(--accent); }
+.yr-big.small.down small { color: var(--warn); }
 .yr-cmp { margin-top: 20px; display: flex; flex-direction: column; gap: 8px; }
 .yr-cmp-row {
   display: flex;
@@ -3502,25 +3529,34 @@ html.gl-preview #stage-canvas {
   gap: 10px;
   padding: 11px 14px;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: var(--card);
+  border: 1px solid var(--line);
   font-size: 12px;
 }
-.yr-cmp-row .k { color: rgba(255, 255, 255, 0.55); letter-spacing: 0.6px; }
-.yr-cmp-row .now { margin-left: auto; font-size: 20px; font-weight: 700; color: #fff; font-variant-numeric: tabular-nums; }
-.yr-cmp-row .was { font-size: 10.5px; color: rgba(255, 255, 255, 0.38); }
+.yr-cmp-row .k { color: var(--muted); letter-spacing: 0.6px; }
+.yr-cmp-row .now { margin-left: auto; font-size: 20px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.yr-cmp-row .was { font-size: 10.5px; color: var(--dim); }
 .yr-cmp-row .delta { font-size: 11px; font-weight: 600; }
-.yr-cmp-row .delta.up { color: #d8ff3e; }
-.yr-cmp-row .delta.down { color: #e8b84a; }
+.yr-cmp-row .delta.up { color: var(--accent); }
+.yr-cmp-row .delta.down { color: var(--warn); }
 
 .yr-mini {
   margin: 16px 0 6px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--card);
+  border: 1px solid var(--line);
   border-radius: 16px;
   padding: 10px;
 }
 .yr-mini svg { display: block; width: 100%; }
+.yr-mini svg .route {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 3.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.yr-mini svg .start { fill: var(--text); }
+.yr-mini svg .end { fill: var(--warn); }
 
 .yr-top-list {
   display: flex;
@@ -3532,8 +3568,8 @@ html.gl-preview #stage-canvas {
   display: flex;
   align-items: center;
   gap: 12px;
-  background: rgba(255, 255, 255, 0.055);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--card);
+  border: 1px solid var(--line);
   border-radius: 14px;
   padding: 12px 14px;
 }
@@ -3541,8 +3577,8 @@ html.gl-preview #stage-canvas {
   width: 30px;
   height: 30px;
   border-radius: 50%;
-  background: #d8ff3e;
-  color: #0f2a38;
+  background: var(--accent);
+  color: var(--accent-ink);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3553,31 +3589,31 @@ html.gl-preview #stage-canvas {
 .yr-top-item .info { flex: 1; min-width: 0; }
 .yr-top-item .name {
   font-size: 14.5px;
-  color: #fff;
+  color: var(--text);
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.yr-top-item .meta { font-size: 11px; color: rgba(255, 255, 255, 0.5); margin-top: 3px; }
-.yr-top-item .times { font-size: 12px; color: #d8ff3e; font-weight: 600; flex-shrink: 0; }
+.yr-top-item .meta { font-size: 11px; color: var(--dim); margin-top: 3px; }
+.yr-top-item .times { font-size: 12px; color: var(--accent); font-weight: 600; flex-shrink: 0; }
 
 .yr-badge-card {
   align-items: center;
   text-align: center;
   justify-content: center;
-  background: radial-gradient(110% 80% at 50% 100%, #2a4a2f 0%, #0f2a38 65%);
+  background: radial-gradient(110% 80% at 50% 100%, var(--card-2) 0%, var(--page) 65%);
 }
 .yr-badge {
   width: 148px;
   height: 148px;
   border-radius: 50%;
   margin-bottom: 22px;
-  background: conic-gradient(from 0deg, #e8b84a, #d8ff3e, #e8b84a);
+  background: conic-gradient(from 0deg, var(--warn), var(--accent), var(--warn));
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 0 60px rgba(216, 255, 62, 0.35);
+  box-shadow: 0 0 60px var(--accent-line);
   animation: yr-rot 24s linear infinite;
 }
 @keyframes yr-rot { to { transform: rotate(360deg); } }
@@ -3585,7 +3621,7 @@ html.gl-preview #stage-canvas {
   width: 116px;
   height: 116px;
   border-radius: 50%;
-  background: #0f2a38;
+  background: var(--card);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3595,12 +3631,12 @@ html.gl-preview #stage-canvas {
 .yr-title-name {
   font-size: 33px;
   font-weight: 700;
-  color: #d8ff3e;
+  color: var(--accent);
   letter-spacing: 4px;
 }
 .yr-title-desc {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--muted);
   margin-top: 10px;
   line-height: 1.7;
 }
@@ -3619,20 +3655,20 @@ html.gl-preview #stage-canvas {
   border-radius: 16px;
   padding: 15px 18px;
   cursor: pointer;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.06);
-  color: #fff;
+  border: 1px solid var(--line-strong);
+  background: var(--card);
+  color: var(--text);
   font-family: inherit;
   text-align: left;
   transition: transform 0.15s;
 }
 .yr-cta:active { transform: scale(0.98); }
-.yr-cta.primary { background: #d8ff3e; border: none; }
+.yr-cta.primary { background: var(--accent); border: none; color: var(--accent-ink); }
 .yr-cta .ic {
   width: 38px;
   height: 38px;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--accent-soft);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3642,23 +3678,21 @@ html.gl-preview #stage-canvas {
   width: 18px;
   height: 18px;
   fill: none;
-  stroke: #fff;
+  stroke: currentColor;
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.yr-cta.primary .ic { background: rgba(15, 42, 56, 0.14); }
-.yr-cta.primary .ic svg { stroke: #0f2a38; }
-.yr-cta b { display: block; font-size: 16px; font-weight: 700; color: #fff; }
-.yr-cta.primary b { color: #0f2a38; }
+.yr-cta.primary .ic { background: rgba(0, 0, 0, 0.14); color: var(--accent-ink); }
+.yr-cta b { display: block; font-size: 16px; font-weight: 700; color: inherit; }
 .yr-cta i {
   display: block;
   font-style: normal;
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--dim);
   margin-top: 2px;
 }
-.yr-cta.primary i { color: rgba(15, 42, 56, 0.6); }
+.yr-cta.primary i { color: var(--accent-ink); opacity: 0.62; }
 
 .yr-nav {
   position: absolute;
@@ -3670,7 +3704,7 @@ html.gl-preview #stage-canvas {
   align-items: center;
   justify-content: center;
   padding: 0 20px;
-  background: linear-gradient(180deg, rgba(11, 15, 19, 0), rgba(11, 15, 19, 0.88) 40%);
+  background: linear-gradient(180deg, rgba(var(--yr-scrim), 0), rgba(var(--yr-scrim), 0.88) 40%);
   z-index: 10;
   pointer-events: none;
 }
@@ -3679,7 +3713,59 @@ html.gl-preview #stage-canvas {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.25);
+  background: var(--line-strong);
   transition: all 0.3s;
 }
-.yr-dot.on { width: 20px; border-radius: 4px; background: #d8ff3e; }
+.yr-dot.on { width: 20px; border-radius: 4px; background: var(--accent); }
+
+/* ── 年度回顾视频预览：全屏播放，播完自动保存并关闭 ───────── */
+.yr-video-preview {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: flex;
+  flex-direction: column;
+  background: #000;
+}
+.yr-video-preview[hidden] { display: none; }
+.yr-video-preview video {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  object-fit: contain;
+  background: #000;
+}
+.yr-video-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  background: rgba(10, 12, 14, 0.92);
+}
+.yr-video-bar .tip {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.65);
+  letter-spacing: 0.4px;
+}
+.yr-video-bar button {
+  flex-shrink: 0;
+  min-height: 40px;
+  padding: 0 18px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: transparent;
+  color: #e8efe9;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.yr-video-bar button.save {
+  border: none;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+}
+.yr-video-bar button:active { transform: scale(0.97); }
