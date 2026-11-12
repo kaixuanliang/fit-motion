@@ -20,3 +20,4 @@ tools/downloads/
 *.genie
 .DS_Store
 screenshots/tmp-shot/
+vite.config.js.timestamp-*.mjs
