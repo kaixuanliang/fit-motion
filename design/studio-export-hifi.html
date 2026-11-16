@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="tech">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>创作页 · 导出按钮归属 · 高保真原型</title>
+<style>
+/* ── 主题变量：与 src/app.css 完全同源 ───────────────────────── */
+:root,
+:root[data-theme="tech"] {
+  --bg: #06080a; --bg-soft: #0a0e11; --card: #11171b; --card-2: #161e23;
+  --text: #e8f0ec; --muted: #8d9c96; --dim: #5c6a65;
+  --line: rgba(232, 240, 236, 0.09); --line-strong: rgba(232, 240, 236, 0.18);
+  --accent: #b4e64a; --accent-ink: #0a0d08;
+  --accent-soft: rgba(180, 230, 74, 0.12); --accent-line: rgba(180, 230, 74, 0.34);
+  --page: #04060a;
+}
+:root[data-theme="night"] {
+  --bg: #05070f; --bg-soft: #080c17; --card: #0d1320; --card-2: #121a2a;
+  --text: #e9eef8; --muted: #7c8aa0; --dim: #556179;
+  --line: rgba(233, 238, 248, 0.09); --line-strong: rgba(233, 238, 248, 0.18);
+  --accent: #7ea6ff; --accent-ink: #07101f;
+  --accent-soft: rgba(126, 166, 255, 0.12); --accent-line: rgba(126, 166, 255, 0.38);
+  --page: #04060a;
+}
+:root[data-theme="bright"] {
+  --bg: #f2f4ef; --bg-soft: #e9ece4; --card: #ffffff; --card-2: #f6f8f2;
+  --text: #191c1a; --muted: #68736d; --dim: #9aa49e;
+  --line: rgba(0, 0, 0, 0.08); --line-strong: rgba(0, 0, 0, 0.16);
+  --accent: #5e8c18; --accent-ink: #ffffff;
+  --accent-soft: rgba(94, 140, 24, 0.09); --accent-line: rgba(94, 140, 24, 0.34);
+  --page: #e4e7e0;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: #101214; font-family: "PingFang SC", "Microsoft YaHei",
+    "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
+  display: flex; flex-direction: column; align-items: center; padding: 26px 20px 40px;
+}
+.hdr { width: 400px; margin-bottom: 18px; }
+.hdr p { margin: 0 0 10px; font-size: 12px; color: #7d8a86; line-height: 1.7; }
+.theme-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; max-width: 300px; }
+.theme-grid button {
+  display: flex; flex-direction: column; gap: 3px; padding: 9px 8px;
+  border-radius: 10px; border: 0.5px solid var(--line-strong); background: none;
+  color: var(--text); font-size: 11.5px; cursor: pointer; text-align: left; font-family: inherit;
+}
+.theme-grid button small { font-size: 9.5px; color: var(--dim); }
+.theme-grid button.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.theme-grid button.on small { color: var(--accent); opacity: 0.75; }
+
+/* ── 手机壳：复刻 App 布局 ──────────────────────────────────── */
+.phone {
+  width: 400px; background: var(--bg); color: var(--text);
+  border-radius: 26px; overflow: hidden; border: 1px solid var(--line-strong);
+}
+.pane { display: flex; flex-direction: column; gap: 9px; padding: 18px 15px 0; }
+.pane-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 2px; }
+.pane-head h1 { margin: 0; font-size: 21px; font-weight: 600; letter-spacing: 0.2px; }
+.pane-head .sum { font-size: 11px; color: var(--muted); }
+
+/* 子页切换：沿用 es-seg 的分段控件语汇 */
+.pageseg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.pageseg button {
+  font: inherit; font-size: 12px; padding: 8px 0; border-radius: 9px;
+  border: 0.5px solid var(--line-strong); background: transparent;
+  color: var(--muted); cursor: pointer;
+}
+.pageseg button.active {
+  border-color: var(--accent); background: var(--accent); color: var(--accent-ink); font-weight: 600;
+}
+
+.screen { display: none; flex-direction: column; gap: 9px; padding-bottom: 12px; }
+.screen.on { display: flex; }
+
+/* 舞台预览 */
+.stagebox { position: relative; height: 210px; border-radius: 12px; background: var(--card); border: 0.5px solid var(--line); overflow: hidden; }
+.stagebox svg.route { position: absolute; inset: 0; width: 100%; height: 100%; }
+.stage-label { position: absolute; left: 10px; top: 10px; font-size: 10px; color: var(--muted); background: var(--bg); border: 0.5px solid var(--line-strong); border-radius: 7px; padding: 4px 8px; }
+.playbar { position: absolute; left: 10px; right: 10px; bottom: 10px; height: 3px; border-radius: 2px; background: var(--line-strong); overflow: hidden; }
+.playbar i { display: block; height: 100%; width: 34%; background: var(--accent); }
+
+/* 卡片 */
+.card { background: var(--card); border-radius: 12px; padding: 11px 12px; border: 0.5px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+.card-title { margin: 0; font-size: 11px; color: var(--muted); letter-spacing: 0.3px; }
+.es-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 2px; }
+.es-title { font-size: 12px; font-weight: 500; color: var(--text); }
+.es-est { font-size: 11px; color: var(--accent); font-variant-numeric: tabular-nums; }
+.es-seg { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.es-seg button {
+  font: inherit; font-size: 12px; padding: 6px 0; border-radius: 8px;
+  border: 0.5px solid var(--line-strong); background: transparent; color: var(--muted);
+  cursor: pointer; font-variant-numeric: tabular-nums;
+}
+.es-seg button.active { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); font-weight: 500; }
+.es-note { margin: 3px 0 0; font-size: 10.5px; color: var(--dim); }
+
+/* 主按钮系（与 App 同规格） */
+.cta { height: 46px; border-radius: 11px; border: 0; background: var(--accent); color: var(--accent-ink);
+  font-size: 13.5px; font-weight: 600; display: flex; align-items: center; justify-content: center;
+  gap: 7px; cursor: pointer; font-family: inherit; }
+.cta svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.cta.share-cta { height: 40px; font-size: 12.5px; background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+.cta-note { margin: -4px 0 0; text-align: center; font-size: 10px; color: var(--dim); }
+
+/* ── 数据页 ── */
+.metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+.metrics div { background: var(--card); border: 0.5px solid var(--line); border-radius: 10px; padding: 9px 10px; }
+.metrics i { display: block; font-style: normal; font-size: 10.5px; color: var(--muted); }
+.metrics b { display: block; font-size: 14.5px; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.chart-card { background: var(--card); border: 0.5px solid var(--line); border-radius: 12px; padding: 11px 12px; }
+.chart-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+.chart-head .ct { font-size: 12px; font-weight: 500; color: var(--text); }
+.chart-head .cl { font-size: 10px; color: var(--dim); }
+.legend { display: flex; gap: 12px; margin-top: 4px; }
+.legend span { font-size: 10px; color: var(--muted); display: flex; align-items: center; gap: 5px; }
+.legend i { width: 14px; height: 2px; border-radius: 1px; display: inline-block; }
+
+/* 导出与分享卡：本次设计的核心 */
+.xcard { background: var(--card); border-radius: 12px; padding: 11px 12px; border: 0.5px solid var(--line-strong); }
+.xhead { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 9px; }
+.xhead .xt { font-size: 12px; font-weight: 500; color: var(--text); }
+.xhead .xh { font-size: 10px; color: var(--dim); }
+.fmt { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+.fmt button {
+  height: 40px; border-radius: 10px; border: 1px solid var(--accent-line);
+  background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 600;
+  display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; font-family: inherit;
+}
+.fmt button svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.fmt-note { margin: 7px 0 0; font-size: 10.5px; color: var(--dim); line-height: 1.6; }
+.xdiv { height: 0.5px; background: var(--line-strong); margin: 10px 0; }
+.longimg { width: 100%; height: 40px; border-radius: 10px; border: 0.5px solid var(--line-strong);
+  background: var(--card-2); color: var(--text); font-size: 12.5px; font-weight: 500;
+  display: flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer; font-family: inherit; }
+.longimg svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+
+/* 心率区间 */
+.zones { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+.zone { display: grid; grid-template-columns: 64px 1fr 44px; align-items: center; gap: 8px; font-size: 10.5px; color: var(--muted); }
+.zone span:first-child { white-space: nowrap; }
+.zone .bar { height: 9px; border-radius: 5px; background: var(--accent); }
+.zone .pct { text-align: right; font-variant-numeric: tabular-nums; color: var(--text); }
+
+/* 解读页 */
+.story { background: var(--card); border: 0.5px solid var(--line); border-radius: 12px; padding: 11px 12px; }
+.story .st { font-size: 12px; font-weight: 500; color: var(--accent); margin: 0 0 5px; }
+.story p { margin: 0; font-size: 12.5px; line-height: 1.7; color: var(--text); }
+
+/* 底栏 */
+.tabbar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; padding: 8px 6px 12px; border-top: 0.5px solid var(--line); background: var(--bg); }
+.tab { display: flex; flex-direction: column; align-items: center; gap: 3px; background: none; border: 0; color: var(--muted); font-size: 10px; cursor: pointer; font-family: inherit; padding: 4px 0; }
+.tab svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.tab.on { color: var(--accent); font-weight: 500; }
+</style>
+</head>
+<body>
+<div class="hdr">
+  <p>原型说明：主题由「设置 → 主题」统一驱动（与 App 现机制一致，documentElement.data-theme），创作页不含独立主题开关。点下方主题格换肤，点分段控件切子页。</p>
+  <div class="theme-grid" id="themeGrid">
+    <button type="button" data-set-theme="tech" class="on">科技<small>青黑 · 荧光</small></button>
+    <button type="button" data-set-theme="night">夜间<small>深蓝 · 霓虹</small></button>
+    <button type="button" data-set-theme="bright">明亮<small>暖白 · 湖蓝</small></button>
+  </div>
+</div>
+
+<div class="phone" id="phone">
+  <div class="pane">
+    <div class="pane-head"><h1>创作</h1><span class="sum">环巢湖 100km · 昨天</span></div>
+    <div class="pageseg" id="pageSeg">
+      <button type="button" data-p="film">成片</button>
+      <button type="button" data-p="data" class="active">数据</button>
+      <button type="button" data-p="story">解读</button>
+    </div>
+
+    <!-- ── 数据页（默认展示：导出按钮归属重点） ── -->
+    <div class="screen on" id="scr-data">
+      <div class="metrics">
+        <div><i>距离 km</i><b>100.4</b></div>
+        <div><i>爬升 m</i><b>1,268</b></div>
+        <div><i>均速 km/h</i><b>24.8</b></div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-head"><span class="ct">海拔与速度</span><span class="cl">按里程展开</span></div>
+        <svg viewBox="0 0 372 96" width="100%" height="96">
+          <path d="M0 84 C 40 80 62 52 100 58 C 138 64 168 34 212 30 C 256 26 278 44 318 38 C 344 34 360 22 372 16 L 372 96 L 0 96 Z"
+                fill="var(--accent-soft)" stroke="none"/>
+          <path d="M0 84 C 40 80 62 52 100 58 C 138 64 168 34 212 30 C 256 26 278 44 318 38 C 344 34 360 22 372 16"
+                fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/>
+          <path d="M0 90 C 50 86 78 72 118 76 C 158 80 196 62 240 66 C 282 70 330 58 372 54"
+                fill="none" stroke="var(--muted)" stroke-width="1.4" stroke-dasharray="4 4" opacity="0.75"/>
+          <text x="4" y="14" font-size="9.5" fill="var(--dim)">412 m</text>
+          <text x="4" y="90" font-size="9.5" fill="var(--dim)">28 m</text>
+        </svg>
+        <div class="legend">
+          <span><i style="background:var(--accent)"></i>海拔</span>
+          <span><i style="background:var(--muted);height:0;height:2px;border-top:2px dashed var(--muted);background:none"></i>速度</span>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-head"><span class="ct">心率区间</span><span class="cl">全程 4h 03m</span></div>
+        <div class="zones">
+          <div class="zone"><span>Z1 放松</span><div class="bar" style="width:36%;opacity:.35"></div><span class="pct">18%</span></div>
+          <div class="zone"><span>Z2 耐力</span><div class="bar" style="width:82%;opacity:.55"></div><span class="pct">41%</span></div>
+          <div class="zone"><span>Z3 有氧</span><div class="bar" style="width:54%;opacity:.75"></div><span class="pct">27%</span></div>
+          <div class="zone"><span>Z4 阈值</span><div class="bar" style="width:22%;opacity:.92"></div><span class="pct">11%</span></div>
+          <div class="zone"><span>Z5 极限</span><div class="bar" style="width:7%;opacity:1"></div><span class="pct">3%</span></div>
+        </div>
+      </div>
+
+      <!-- 导出与分享：FIT / GPX / TCX + 数据长图 -->
+      <div class="xcard">
+        <div class="xhead"><span class="xt">导出与分享</span><span class="xh">全本地生成</span></div>
+        <div class="fmt">
+          <button type="button"><svg viewBox="0 0 16 16"><path d="M8 1.5v7.5M4.8 6.2 8 9.4l3.2-3.2M2.5 13.5h11"/></svg>FIT</button>
+          <button type="button"><svg viewBox="0 0 16 16"><path d="M2 12.5C4 5.5 7 4.5 9 6.5c2 2 3.2 1.8 5-2.5"/></svg>GPX</button>
+          <button type="button"><svg viewBox="0 0 16 16"><path d="M2 12.5C4 5.5 7 4.5 9 6.5c2 2 3.2 1.8 5-2.5M2.5 15h11"/></svg>TCX</button>
+        </div>
+        <p class="fmt-note">轨迹原始格式 · 保留经纬度 / 时间 / 心率，可回传其他平台</p>
+        <div class="xdiv"></div>
+        <button class="longimg" type="button">
+          <svg viewBox="0 0 16 16"><rect x="3" y="1.5" width="10" height="13" rx="1.5"/><path d="M5.5 5h5M5.5 8h5M5.5 11h3"/></svg>
+          导出数据长图
+        </button>
+        <p class="fmt-note">1080 × 2400 · 指标 + 曲线 + 里程碑，直接分享</p>
+      </div>
+    </div>
+
+    <!-- ── 成片页 ── -->
+    <div class="screen" id="scr-film">
+      <div class="stagebox">
+        <svg class="route" viewBox="0 0 370 210" preserveAspectRatio="none">
+          <path d="M60 150 C 100 90 150 70 200 92 C 250 114 260 160 300 138 C 330 120 320 84 280 66 C 230 44 140 60 96 118 C 70 152 78 170 110 178"
+                fill="none" stroke="var(--line-strong)" stroke-width="7" stroke-linecap="round" opacity="0.5"/>
+          <path d="M60 150 C 100 90 150 70 200 92" fill="none" stroke="var(--accent)" stroke-width="5" stroke-linecap="round"/>
+          <circle cx="200" cy="92" r="5.5" fill="var(--accent)"/>
+        </svg>
+        <span class="stage-label">预览 · 00:12 / 00:36</span>
+        <div class="playbar"><i></i></div>
+      </div>
+
+      <div class="card">
+        <div class="es-head"><span class="es-title">视频时长</span><span class="es-est">成片约 36 秒</span></div>
+        <div class="es-seg">
+          <button type="button" class="active">自动</button>
+          <button type="button">20s</button>
+          <button type="button">40s</button>
+          <button type="button">60s</button>
+        </div>
+        <p class="es-note">自动按距离配时长；固定档位为成片总时长，预览与导出一致</p>
+      </div>
+
+      <button class="cta" type="button"><svg viewBox="0 0 16 16"><path d="M8 1.5v9M4.5 7 8 10.5 11.5 7M2 13.5h12"/></svg>导出 1080P MP4</button>
+      <p class="cta-note">1080 × 1920 · 30FPS · MP4 · 导出时请保持此页面在前台</p>
+      <button class="cta share-cta" type="button"><svg viewBox="0 0 16 16"><path d="M9.5 2 14 5.8 9.5 9.6V7.2C6 7.2 4 8.8 3.5 12 3.5 8 5.5 5.4 9.5 5.2V2z"/></svg>分享视频给好友</button>
+
+      <div class="card" style="padding:9px 10px">
+        <div style="display:flex;gap:7px">
+          <button class="longimg" type="button" style="height:38px">
+            <svg viewBox="0 0 16 16"><rect x="3" y="1.5" width="10" height="13" rx="1.5"/><path d="M5.5 5h5M5.5 8h5M5.5 11h3"/></svg>
+            保存路线图
+          </button>
+        </div>
+        <p class="es-note">FIT / GPX / TCX 与数据长图已移至「数据」页</p>
+      </div>
+    </div>
+
+    <!-- ── 解读页 ── -->
+    <div class="screen" id="scr-story">
+      <div class="story"><p class="st">今日故事</p><p>最难的 5 公里在最后：末段爬升 210 米、均速掉到 18.2 km/h，但你把心率稳住了——这是全程最硬的一段。</p></div>
+      <div class="story"><p class="st">亮点时刻</p><p>最高心率 172 出现在 78km 冲刺段；最快 52.3 km/h 出现在 41km 下坡；最长连续爬坡 6.8km。</p></div>
+      <div class="story"><p class="st">体力节奏</p><p>状态最佳在 55–72km：均速 27.4 km/h 且心率平稳。前 20km 偏激进，建议下次把强度留到中后段。</p></div>
+      <button class="longimg" type="button" style="margin-top:2px">
+        <svg viewBox="0 0 16 16"><rect x="3" y="1.5" width="10" height="13" rx="1.5"/><path d="M5.5 5h5M5.5 8h5M5.5 11h3"/></svg>
+        导出解读长图
+      </button>
+      <p class="cta-note">1080 × 2400 · 故事 + 亮点 + 节奏，直接分享</p>
+    </div>
+  </div>
+
+  <div class="tabbar">
+    <button class="tab" type="button"><svg viewBox="0 0 16 16"><path d="M3 2.5h10M3 6h10M3 9.5h10M3 13h6"/></svg><span>记录</span></button>
+    <button class="tab on" type="button"><svg viewBox="0 0 16 16"><path d="M8 2.5v11M2.5 8h11"/></svg><span>创作</span></button>
+    <button class="tab" type="button"><svg viewBox="0 0 16 16"><ellipse cx="8" cy="4" rx="5.5" ry="2.2"/><path d="M2.5 4v8c0 1.2 2.5 2.2 5.5 2.2s5.5-1 5.5-2.2V4"/></svg><span>备份</span></button>
+    <button class="tab" type="button"><svg viewBox="0 0 16 16"><path d="M2 5.5h12M2 10.5h12M5.5 3v5M10.5 8v5"/></svg><span>设置</span></button>
+  </div>
+</div>
+
+<script>
+document.getElementById('themeGrid').addEventListener('click', function (e) {
+  var b = e.target.closest('button'); if (!b) return;
+  document.documentElement.dataset.theme = b.dataset.setTheme;
+  this.querySelectorAll('button').forEach(function (x) { x.classList.toggle('on', x === b); });
+});
+document.getElementById('pageSeg').addEventListener('click', function (e) {
+  var b = e.target.closest('button'); if (!b) return;
+  this.querySelectorAll('button').forEach(function (x) { x.classList.toggle('active', x === b); });
+  ['film', 'data', 'story'].forEach(function (k) {
+    document.getElementById('scr-' + k).classList.toggle('on', k === b.dataset.p);
+  });
+});
+</script>
+</body>
+</html>

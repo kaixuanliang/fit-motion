@@ -37,6 +37,8 @@
       <symbol id="i-share" viewBox="0 0 24 24"><circle cx="6" cy="12" r="2.5"/><circle cx="17" cy="5.5" r="2.5"/><circle cx="17" cy="18.5" r="2.5"/><path d="m8.3 10.8 6.4-4M8.3 13.2l6.4 4"/></symbol>
       <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14.2 14.2 0 0 1 0 18 14.2 14.2 0 0 1 0-18Z"/></symbol>
       <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.9 5.3L19 10l-5.1 1.7L12 17l-1.9-5.3L5 10l5.1-1.7L12 3Z"/><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16Z"/></symbol>
+      <symbol id="i-gpx" viewBox="0 0 24 24"><path d="M3 16.5C6 7.5 9 6 11.5 9s4.5 3 9.5-3"/></symbol>
+      <symbol id="i-tcx" viewBox="0 0 24 24"><path d="M3 15c3-9 6-10.5 8.5-7.5S16 10 21 4"/><path d="M3 20h18"/></symbol>
     </svg>
 
     <div class="app" id="app" data-view="records">
@@ -279,6 +281,13 @@
             <button class="icon-btn" id="change-file" type="button" aria-label="更换记录"><svg><use href="#i-list"/></svg></button>
           </div>
 
+          <div class="pageseg" id="studio-pageseg" role="tablist" aria-label="创作页子页">
+            <button type="button" data-spage="film" class="active">成片</button>
+            <button type="button" data-spage="data">数据</button>
+            <button type="button" data-spage="story">解读</button>
+          </div>
+
+          <div class="spage on" id="sp-film">
           <div class="stage-hold" id="stage-hold">
             <div class="stage-frame" id="stage-frame">
               <canvas id="stage-ambient" aria-hidden="true"></canvas>
@@ -325,30 +334,6 @@
             <button class="link" id="swap-music" type="button">更换</button>
           </div>
 
-          <div class="metric-grid">
-            <article class="metric-card"><span class="mi"><svg><use href="#i-route"/></svg></span><small>总距离</small><div><b id="total-distance">--</b><em>公里</em></div></article>
-            <article class="metric-card"><span class="mi"><svg><use href="#i-hourglass"/></svg></span><small>总时长</small><div><b id="total-elapsed">--</b></div></article>
-            <article class="metric-card"><span class="mi"><svg><use href="#i-clock"/></svg></span><small>运动时长</small><div><b id="total-duration">--</b></div></article>
-            <article class="metric-card"><span class="mi"><svg><use href="#i-bolt"/></svg></span><small>最快速度</small><div><b id="max-speed">--</b><em>km/h</em></div></article>
-            <article class="metric-card"><span class="mi"><svg><use href="#i-gauge"/></svg></span><small>平均速度</small><div><b id="avg-speed">--</b><em id="avg-speed-unit">km/h</em></div></article>
-            <article class="metric-card"><span class="mi"><svg><use href="#i-heart"/></svg></span><small>最高心率</small><div><b id="max-hr">--</b><em>次/分</em></div></article>
-            <article class="metric-card"><span class="mi"><svg><use href="#i-pulse"/></svg></span><small>平均心率</small><div><b id="avg-hr">--</b><em id="avg-hr-unit">次/分</em></div></article>
-            <article class="metric-card"><span class="mi"><svg><use href="#i-flame"/></svg></span><small>消耗热量</small><div><b id="calories">--</b><em id="calories-unit">千卡</em></div></article>
-            <article class="metric-card"><span class="mi"><svg><use href="#i-mountain"/></svg></span><small>最高海拔</small><div><b id="max-altitude">--</b><em id="max-altitude-unit">米</em></div></article>
-          </div>
-
-          <div class="trip-card" id="trip-card" hidden>
-            <div class="trip-head">
-              <div class="trip-titles">
-                <b id="trip-title">多日行程</b>
-                <small id="trip-sub"></small>
-              </div>
-              <span class="trip-badge" id="trip-badge"></span>
-            </div>
-            <ol class="trip-legs" id="trip-legs"></ol>
-            <p class="trip-note" id="trip-note"></p>
-          </div>
-
           <div class="export-speed-card" id="export-speed-card">
             <div class="es-head">
               <span class="es-title">视频时长</span>
@@ -368,18 +353,72 @@
 
           <button class="cta share-cta" id="share-video-btn" type="button"><svg><use href="#i-share"/></svg> 分享视频给好友</button>
 
-          <div class="sub-actions">
-            <button class="sub" id="export-poster-btn" type="button">保存路线图</button>
-            <button class="sub" id="export-track-fit" type="button">导出 FIT</button>
-            <button class="sub" id="export-track-gpx" type="button">导出 GPX</button>
-            <button class="sub" id="export-track-tcx" type="button">导出 TCX</button>
+            <div class="sub-actions">
+              <button class="sub" id="export-poster-btn" type="button">保存路线图</button>
+            </div>
+            <p class="sp-note">FIT / GPX / TCX 与数据长图已移至「数据」页</p>
           </div>
 
-          <div class="sub-actions sub-actions-next">
-            <button class="sub" id="stats-image-btn" type="button">导出数据长图</button>
+          <div class="spage" id="sp-data">
+            <div class="metric-grid">
+              <article class="metric-card"><span class="mi"><svg><use href="#i-route"/></svg></span><small>总距离</small><div><b id="total-distance">--</b><em>公里</em></div></article>
+              <article class="metric-card"><span class="mi"><svg><use href="#i-hourglass"/></svg></span><small>总时长</small><div><b id="total-elapsed">--</b></div></article>
+              <article class="metric-card"><span class="mi"><svg><use href="#i-clock"/></svg></span><small>运动时长</small><div><b id="total-duration">--</b></div></article>
+              <article class="metric-card"><span class="mi"><svg><use href="#i-bolt"/></svg></span><small>最快速度</small><div><b id="max-speed">--</b><em>km/h</em></div></article>
+              <article class="metric-card"><span class="mi"><svg><use href="#i-gauge"/></svg></span><small>平均速度</small><div><b id="avg-speed">--</b><em id="avg-speed-unit">km/h</em></div></article>
+              <article class="metric-card"><span class="mi"><svg><use href="#i-heart"/></svg></span><small>最高心率</small><div><b id="max-hr">--</b><em>次/分</em></div></article>
+              <article class="metric-card"><span class="mi"><svg><use href="#i-pulse"/></svg></span><small>平均心率</small><div><b id="avg-hr">--</b><em id="avg-hr-unit">次/分</em></div></article>
+              <article class="metric-card"><span class="mi"><svg><use href="#i-flame"/></svg></span><small>消耗热量</small><div><b id="calories">--</b><em id="calories-unit">千卡</em></div></article>
+              <article class="metric-card"><span class="mi"><svg><use href="#i-mountain"/></svg></span><small>最高海拔</small><div><b id="max-altitude">--</b><em id="max-altitude-unit">米</em></div></article>
+            </div>
+
+            <div class="trip-card" id="trip-card" hidden>
+              <div class="trip-head">
+                <div class="trip-titles">
+                  <b id="trip-title">多日行程</b>
+                  <small id="trip-sub"></small>
+                </div>
+                <span class="trip-badge" id="trip-badge"></span>
+              </div>
+              <ol class="trip-legs" id="trip-legs"></ol>
+              <p class="trip-note" id="trip-note"></p>
+            </div>
+
+            <div class="chart-card" id="elev-card" hidden>
+              <div class="chart-head"><span class="ct">海拔与速度</span><span class="cl">按里程展开</span></div>
+              <canvas id="chart-elev" aria-label="海拔与速度曲线"></canvas>
+              <div class="chart-legend">
+                <span><i class="lg lg-solid"></i>海拔</span>
+                <span><i class="lg lg-dash"></i>速度</span>
+              </div>
+            </div>
+
+            <div class="chart-card" id="hr-card" hidden>
+              <div class="chart-head"><span class="ct">心率区间</span><span class="cl" id="hr-total"></span></div>
+              <div class="zones" id="hr-zones"></div>
+            </div>
+
+            <div class="xcard">
+              <div class="xhead"><span class="xt">导出与分享</span><span class="xh">全本地生成</span></div>
+              <div class="fmt">
+                <button class="fmt-btn" id="export-track-fit" type="button"><svg><use href="#i-download"/></svg>FIT</button>
+                <button class="fmt-btn" id="export-track-gpx" type="button"><svg><use href="#i-gpx"/></svg>GPX</button>
+                <button class="fmt-btn" id="export-track-tcx" type="button"><svg><use href="#i-tcx"/></svg>TCX</button>
+              </div>
+              <p class="fmt-note">轨迹原始格式 · 保留经纬度、时间与心率，可回传其他平台</p>
+              <div class="xdiv"></div>
+              <button class="longimg" id="stats-image-btn" type="button"><svg><use href="#i-download"/></svg>导出数据长图</button>
+              <p class="fmt-note">指标 + 曲线 + 里程碑，直接分享朋友圈</p>
+            </div>
           </div>
 
-          <button class="sub clear-cache-btn" id="clear-cache" type="button">清除地图缓存</button>
+          <div class="spage" id="sp-story">
+            <article class="story-card"><p class="st">今日故事</p><p class="sx" id="story-main">--</p></article>
+            <article class="story-card"><p class="st">亮点时刻</p><p class="sx" id="story-highlights">--</p></article>
+            <article class="story-card"><p class="st">体力节奏</p><p class="sx" id="story-pace">--</p></article>
+            <button class="longimg" id="story-image-btn" type="button"><svg><use href="#i-spark"/></svg>导出解读长图</button>
+            <p class="fmt-note" style="text-align:center">故事 + 亮点 + 节奏，直接分享</p>
+          </div>
         </section>
 
       </main>

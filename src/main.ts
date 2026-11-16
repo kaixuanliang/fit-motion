@@ -16,6 +16,7 @@ import { MotionStage } from './render/stage';
 import { THEMES, isThemeId, type ThemeId } from './render/theme';
 import { bindTabbar, currentPane, showPane } from './ui/router';
 import { initRecords, type RecordsApi } from './ui/records';
+import { renderAnalysis, buildStories } from './ui/studio-analysis';
 import { closeYearReview, yearReviewOpen } from './ui/year-review';
 import { initImport, type ImportApi } from './ui/import-page';
 import { initMerge, type MergeApi } from './ui/merge-page';
@@ -544,13 +545,39 @@ function bindEvents(): void {
   byId<HTMLButtonElement>('export-track-fit').addEventListener('click', () => void exportTrack('fit'));
   byId<HTMLButtonElement>('export-track-gpx').addEventListener('click', () => void exportTrack('gpx'));
   byId<HTMLButtonElement>('export-track-tcx').addEventListener('click', () => void exportTrack('tcx'));
+  byId<HTMLButtonElement>('story-image-btn').addEventListener('click', () => {
+    void exportStoryImage();
+  });
+  // 创作页子页切换：成片 / 数据 / 解读。切走成片页先暂停播放，
+  // 切进数据页时画布刚恢复可见（display:none 下 clientWidth 为 0），此刻渲染。
+  const studioPageseg = byId<HTMLElement>('studio-pageseg');
+  studioPageseg.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    const button = target?.closest<HTMLButtonElement>('button[data-spage]');
+    if (!button) return;
+    const page = button.dataset.spage ?? 'film';
+    studioPageseg.querySelectorAll('button').forEach((b) => {
+      b.classList.toggle('active', b === button);
+    });
+    for (const id of ['sp-film', 'sp-data', 'sp-story']) {
+      document.getElementById(id)?.classList.toggle('on', id === `sp-${page}`);
+    }
+    if (page !== 'film') pausePlayback();
+    if (page === 'data' && currentActivity) renderAnalysis(currentActivity);
+    if (page === 'story' && currentActivity) renderAnalysis(currentActivity);
+  });
+  // 设置页主题切换（data-theme）→ 数据页图表换色。只在数据页可见时重绘。
+  new MutationObserver(() => {
+    if (currentActivity && document.getElementById('sp-data')?.classList.contains('on')) {
+      renderAnalysis(currentActivity);
+    }
+  }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   // 保存路线图 PNG（原 >300km 海报模式保留为副选项，任意视角可用）
   byId<HTMLButtonElement>('export-poster-btn').addEventListener('click', () => {
     void exportPoster();
   });
   // 视角切换：>300km 锁定全局（按钮隐藏），其余两种视角自由切换
   byId<HTMLButtonElement>('view-toggle').addEventListener('click', toggleViewMode);
-  byId<HTMLButtonElement>('clear-cache').addEventListener('click', () => void clearMapCacheAndReload());
   stageLoading.addEventListener('click', (event) => {
     const target = event.target as HTMLElement | null;
     if (target?.id === 'cache-retry') {
@@ -868,6 +895,8 @@ function setStudioBusy(busy: boolean): void {
   if (nativeButton) nativeButton.disabled = busy;
   const statsButton = document.getElementById('stats-image-btn') as HTMLButtonElement | null;
   if (statsButton) statsButton.disabled = busy;
+  const storyButton = document.getElementById('story-image-btn') as HTMLButtonElement | null;
+  if (storyButton) storyButton.disabled = busy;
   byId<HTMLButtonElement>('play-btn').disabled = busy;
   byId<HTMLButtonElement>('big-play').disabled = busy;
   byId<HTMLButtonElement>('replay-btn').disabled = busy;
@@ -2366,6 +2395,109 @@ async function exportStatsImage(): Promise<void> {
   } catch (error) {
     console.error(error);
     showToast(error instanceof Error ? error.message : '数据长图生成失败。', true);
+  } finally {
+    exporting = false;
+  }
+}
+
+/**
+ * 解读长图：把「今日故事 / 亮点时刻 / 体力节奏」三段叙事渲染成 1080 宽分享图。
+ * 与数据长图共用主题取色（activeTheme）与保存管线（saveBlob）。
+ */
+async function exportStoryImage(): Promise<void> {
+  if (!currentActivity || exporting) return;
+  const activity = currentActivity;
+  const theme = activeTheme();
+  exporting = true;
+  try {
+    showToast('正在生成解读长图…');
+    const stories = buildStories(activity);
+    const blocks: Array<[string, string]> = [
+      ['今日故事', stories.main],
+      ['亮点时刻', stories.highlights],
+      ['体力节奏', stories.pace],
+    ];
+    const W = 1080;
+    const pad = 54;
+    const sans = '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif';
+    const meas = document.createElement('canvas').getContext('2d');
+    if (!meas) throw new Error('无法创建画布');
+    meas.font = `400 30px ${sans}`;
+    const wrap = (text: string, width: number): string[] => {
+      const lines: string[] = [];
+      let line = '';
+      for (const ch of text) {
+        if (ch === '\n' || meas.measureText(line + ch).width > width) {
+          lines.push(line);
+          line = ch === '\n' ? '' : ch;
+        } else {
+          line += ch;
+        }
+      }
+      if (line) lines.push(line);
+      return lines.length > 0 ? lines : [''];
+    };
+    const headH = 300;
+    const blockHs = blocks.map(([, text]) => 132 + wrap(text, W - pad * 2 - 40).length * 46 + 30);
+    const footH = 120;
+    const H = headH + blockHs.reduce((a, b) => a + b, 0) + 40 + footH;
+    const canvas = document.createElement('canvas');
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('无法创建画布');
+
+    ctx.fillStyle = theme.stageBg;
+    ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'left';
+    ctx.font = `400 26px ${sans}`;
+    ctx.fillStyle = theme.muted;
+    const when = formatDateParts(activity.startTime);
+    ctx.fillText(`${when.date} ${when.time}` + (activity.place ? ` · ${activity.place}` : ''), pad, 96);
+    ctx.font = `700 64px ${sans}`;
+    ctx.fillStyle = theme.text;
+    ctx.fillText(activity.title.slice(0, 18), pad, 180);
+    ctx.font = `500 34px ${sans}`;
+    ctx.fillStyle = theme.accent;
+    const dist = (activity.distanceM / 1000).toFixed(1);
+    const meta = `${dist} km · ${formatDuration(activity.movingSec, true)}${activity.ascent ? ` · 爬升 ${Math.round(activity.ascent)} m` : ''}`;
+    ctx.fillText(meta, pad, 246);
+    ctx.fillStyle = hexToRgba(theme.text, 0.12);
+    ctx.fillRect(pad, 286, W - pad * 2, 2);
+
+    let y = headH + 20;
+    blocks.forEach(([label, text], index) => {
+      ctx.font = `600 30px ${sans}`;
+      ctx.fillStyle = theme.accent;
+      ctx.fillText(label, pad, y + 40);
+      ctx.font = `400 30px ${sans}`;
+      ctx.fillStyle = theme.text;
+      const lines = wrap(text, W - pad * 2 - 40);
+      lines.forEach((line, li) => ctx.fillText(line, pad, y + 96 + li * 46));
+      y += blockHs[index];
+      if (index < blocks.length - 1) {
+        ctx.fillStyle = hexToRgba(theme.text, 0.08);
+        ctx.fillRect(pad, y - 18, W - pad * 2, 1.5);
+      }
+    });
+
+    const footTop = H - footH;
+    ctx.font = `400 22px ${sans}`;
+    ctx.fillStyle = theme.muted;
+    ctx.fillText('FIT MOTION · 全本地规则解读', pad, footTop + 60);
+
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) throw new Error('无法生成解读长图');
+    const filename = `${activity.title}-解读长图-${stamp()}.png`;
+    const result = await saveBlob(blob, filename, 'image/png');
+    showToast(result === 'manual'
+      ? '解读长图已生成，请点击“保存到手机”。'
+      : result === 'picker'
+      ? '请选择保存位置，长图会写入所选文件夹。'
+      : `解读长图已保存：${filename}`);
+  } catch (error) {
+    console.error(error);
+    showToast(error instanceof Error ? error.message : '解读长图生成失败。', true);
   } finally {
     exporting = false;
   }

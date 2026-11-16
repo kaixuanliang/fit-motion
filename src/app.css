@@ -2034,7 +2034,7 @@ html.gl-preview #stage-canvas {
 
 .es-seg {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 6px;
 }
 
@@ -2061,6 +2061,285 @@ html.gl-preview #stage-canvas {
   margin: 7px 0 0;
   font-size: 10.5px;
   color: var(--dim);
+}
+
+/* ── 创作页子页切换（成片 / 数据 / 解读） ─────────────────────── */
+
+.pageseg {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.pageseg button {
+  font: inherit;
+  font-size: 12px;
+  padding: 8px 0;
+  border-radius: 9px;
+  border: 0.5px solid var(--line-strong);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.pageseg button.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 500;
+}
+
+.spage {
+  display: none;
+  flex-direction: column;
+  gap: 9px;
+  flex: 0 0 auto;
+}
+
+.spage.on {
+  display: flex;
+}
+
+.sp-note {
+  margin: 0;
+  text-align: center;
+  font-size: 10px;
+  color: var(--dim);
+}
+
+/* 数据页：图表卡 */
+
+.chart-card {
+  background: var(--card);
+  border-radius: 12px;
+  padding: 11px 12px;
+  border: 0.5px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.chart-card[hidden] {
+  display: none;
+}
+
+.chart-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.chart-head .ct {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.chart-head .cl {
+  font-size: 10px;
+  color: var(--dim);
+}
+
+#chart-elev {
+  width: 100%;
+  height: 96px;
+  display: block;
+}
+
+.chart-legend {
+  display: flex;
+  gap: 14px;
+}
+
+.chart-legend span {
+  font-size: 10px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.chart-legend .lg {
+  width: 14px;
+  height: 0;
+  display: inline-block;
+}
+
+.chart-legend .lg-solid {
+  border-top: 2px solid var(--accent);
+  border-radius: 1px;
+}
+
+.chart-legend .lg-dash {
+  border-top: 2px dashed var(--muted);
+}
+
+.zones {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.zone {
+  display: grid;
+  grid-template-columns: 62px 1fr 44px;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.zone span:first-child {
+  white-space: nowrap;
+}
+
+.zone .bar {
+  height: 9px;
+  border-radius: 5px;
+  background: var(--accent);
+}
+
+.zone .pct {
+  text-align: right;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 数据页：导出与分享卡（FIT / GPX / TCX + 数据长图） */
+
+.xcard {
+  background: var(--card);
+  border-radius: 12px;
+  padding: 11px 12px;
+  border: 0.5px solid var(--line-strong);
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+}
+
+.xhead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 9px;
+}
+
+.xhead .xt {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.xhead .xh {
+  font-size: 10px;
+  color: var(--dim);
+}
+
+.fmt {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 7px;
+}
+
+.fmt-btn {
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.fmt-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.fmt-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.fmt-note {
+  margin: 7px 0 0;
+  font-size: 10.5px;
+  color: var(--dim);
+  line-height: 1.6;
+}
+
+.xdiv {
+  height: 0.5px;
+  background: var(--line-strong);
+  margin: 10px 0;
+}
+
+.longimg {
+  width: 100%;
+  height: 40px;
+  border-radius: 10px;
+  border: 0.5px solid var(--line-strong);
+  background: var(--card-2);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  cursor: pointer;
+}
+
+.longimg svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.longimg:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* 解读页：叙事卡 */
+
+.story-card {
+  background: var(--card);
+  border-radius: 12px;
+  padding: 11px 12px;
+  border: 0.5px solid var(--line);
+  flex: 0 0 auto;
+}
+
+.story-card .st {
+  margin: 0 0 5px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+}
+
+.story-card .sx {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--text);
 }
 
 #studio.is-busy {

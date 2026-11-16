@@ -18,7 +18,7 @@ import { showActionSheet, showConfirm } from './dialog';
 import { showToastAction } from './toast';
 import { openYearReview } from './year-review';
 
-export type ExportFormat = 'gpx' | 'tcx';
+export type ExportFormat = 'gpx' | 'tcx' | 'fit';
 
 export interface RecordsHooks {
   /** 卡片菜单里导出的落地动作，由 main 提供（需要 loadActivity + saveBlob）。 */
@@ -335,6 +335,7 @@ export function initRecords(onOpen: OpenHandler, hooks: RecordsHooks = {}): Reco
         { key: 'create', label: '开始创作', note: '用这条记录生成轨迹短片' },
         { key: 'gpx', label: '导出 GPX', note: '原始轨迹，通用格式' },
         { key: 'tcx', label: '导出 TCX', note: '含里程与时间，Garmin 通用' },
+        { key: 'fit', label: '导出 FIT', note: '原始格式，设备可回读' },
         { key: 'delete', label: '删除记录', note: '移入最近删除，30 天内可恢复', tone: 'danger' },
       ],
     });
