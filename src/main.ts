@@ -556,15 +556,7 @@ function bindEvents(): void {
     const button = target?.closest<HTMLButtonElement>('button[data-spage]');
     if (!button) return;
     const page = button.dataset.spage ?? 'film';
-    studioPageseg.querySelectorAll('button').forEach((b) => {
-      b.classList.toggle('active', b === button);
-    });
-    for (const id of ['sp-film', 'sp-data', 'sp-story']) {
-      document.getElementById(id)?.classList.toggle('on', id === `sp-${page}`);
-    }
-    if (page !== 'film') pausePlayback();
-    if (page === 'data' && currentActivity) renderAnalysis(currentActivity);
-    if (page === 'story' && currentActivity) renderAnalysis(currentActivity);
+    setStudioPage(page === 'data' || page === 'story' ? page : 'film');
   });
   // 设置页主题切换（data-theme）→ 数据页图表换色。只在数据页可见时重绘。
   new MutationObserver(() => {
@@ -1219,10 +1211,27 @@ async function exportRecord(meta: ActivityMeta, format: TrackFormat): Promise<vo
   }
 }
 
+/**
+ * 切换创作页子页（成片 / 数据 / 解读）。切走成片页先暂停播放；
+ * 切进数据/解读页时画布刚恢复可见（display:none 下 clientWidth 为 0），此刻渲染。
+ */
+function setStudioPage(page: 'film' | 'data' | 'story'): void {
+  document.querySelectorAll<HTMLButtonElement>('#studio-pageseg button[data-spage]').forEach((b) => {
+    b.classList.toggle('active', (b.dataset.spage ?? 'film') === page);
+  });
+  for (const id of ['sp-film', 'sp-data', 'sp-story']) {
+    document.getElementById(id)?.classList.toggle('on', id === `sp-${page}`);
+  }
+  if (page !== 'film') pausePlayback();
+  if ((page === 'data' || page === 'story') && currentActivity) renderAnalysis(currentActivity);
+}
+
 function openStudio(activity: Activity, id: string | null = null): void {
   pausePlayback();
   currentActivity = activity;
   currentActivityId = id;
+  // 每次进入创作页都回到「成片」首屏：子页是查看工具，不该跨会话记住
+  setStudioPage('film');
   // >300km 锁定全局视角：第一视角成片的瓦片走廊成本随里程暴涨，不可行
   viewLocked = activity.distanceM > MAX_VIDEO_METERS;
   viewMode = viewLocked ? 'global' : 'follow';
