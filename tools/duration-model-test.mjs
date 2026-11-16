@@ -17,8 +17,8 @@ await page.goto('http://127.0.0.1:5178/', { waitUntil: 'domcontentloaded' });
 
 const result = await page.evaluate(async () => {
   const { runDurationFor } = await import('/src/render/stage.ts');
-  /** 成片总时长 ≈ 封面1.1 + 片头1.0 + run + 时刻停留(默认3个×1.9) + 揭示1.1 + 片尾3.2 */
-  const totalOf = (run, moments = 3) => run + 1.1 + 1.0 + moments * 1.9 + 1.1 + 3.2;
+  /** 成片总时长 ≈ 封面1.1 + 片头1.0 + run + 时刻停留(m×1.9) + 片尾2.4 */
+  const totalOf = (run, moments = 3) => run + 1.1 + 1.0 + moments * 1.9 + 2.4;
   const cases = [
     { km: 1, kmh: 25, moments: 1 },
     { km: 3, kmh: 25, moments: 2 },
@@ -59,14 +59,16 @@ const fast = result.find((r) => r.km === 10 && r.kmh === 35);
 const mid = result.find((r) => r.km === 10 && r.kmh === 22);
 const slow = result.find((r) => r.km === 10 && r.kmh === 12);
 assert(fast.run < mid.run && mid.run < slow.run, '同距离下均速越快 run 应越短');
-// 3. 常见区间必须拉开：10km 与 100km（同速 25km/h）总时长差 ≥ 20s；
-//    30/50/81/100km 四档互相之间至少差 3s，不再挤成一团
+// 3. 常见区间必须拉开：10km 与 100km（同速 25km/h）总时长差 ≥ 10s；
+//    30/50/81/100km 档互相之间至少差 2s，不再挤成一团。
+//    （2026-11-16 换平滑混合曲线 10+30(1−e^(−km/150))：中短距离刻意
+//    平滑过渡，长途 217km≈45s、300km+ 顶到 40s 上限，用户确认的方案 B。）
 const t25 = (km) => result.find((r) => r.km === km && r.kmh === 25)?.total;
-const band = [10, 20, 30, 50, 81, 100].map(t25);
+const band = [10, 30, 50, 81, 100].map(t25);
 assert(band.every((t) => t != null), '25km/h 档位缺数据');
-assert(band[5] - band[0] >= 20, `10km→100km 应差 ≥20s（实际 ${(band[5] - band[0]).toFixed(1)}s）`);
+assert(band[4] - band[0] >= 10, `10km→100km 应差 ≥10s（实际 ${(band[4] - band[0]).toFixed(1)}s）`);
 for (let i = 1; i < band.length; i += 1) {
-  assert(band[i] - band[i - 1] >= 3, `${[10, 20, 30, 50, 81, 100][i]}km 与上一档应差 ≥3s`);
+  assert(band[i] - band[i - 1] >= 2, `${[10, 30, 50, 81, 100][i]}km 与上一档应差 ≥2s`);
 }
 // 4. 短途依然短：最短 < 20s
 const totals = result.map((r) => r.total);

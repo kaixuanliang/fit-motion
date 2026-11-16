@@ -46,15 +46,16 @@ interface TimelineState {
 
 const WIDTH = 1080;
 const HEIGHT = 1920;
-const RUN_MIN = 6;
-const RUN_MAX = 26;
+const RUN_MIN = 8;
+/** 自动档巡航时长上限：217km 落在 ~33s，500km 以上也不超过它。 */
+const RUN_MAX = 40;
 
 /**
  * 走线段时长（秒）：预览与导出共用的唯一权威，时间线其余各段都从这里伸长。
  *
- * 对数感知曲线：8 + 7.5 × ln(1+km)/ln(101)，短途不赶、超长不再线性暴涨。
- * 旧线性公式（7 + 0.36×km，封顶 40s）下 67km 成片 42s，用户反馈太长；
- * 新曲线 30km≈20s、67km≈23s、100km≈24.5s、200km+ 封顶 26s×pace。
+ * 2026-11-16 起改用平滑混合曲线 10 + 30×(1−e^(−km/150))：旧对数曲线在
+ * 100km 后几乎躺平（30/100/300km 的成片几乎一样长，217km 只有 20 多秒，
+ * 用户反馈太短）；新曲线短途不赶、长途有区分度，217km≈33s、500km≈39s。
  * 均速做修正：以 22km/h 为基准，快的压缩到 0.72x，慢的放宽到 1.35x ——
  * 同样的里程，骑得快画面利落，骑得慢沿途多看两眼。
  */
@@ -63,8 +64,8 @@ export function runDurationFor(distanceM: number, avgSpeed: number): number {
   const paceFactor = avgSpeed > 0
     ? clamp(22 / (avgSpeed * 3.6), 0.72, 1.35)
     : 1;
-  const shape = 8 + 7.5 * (Math.log(1 + km) / Math.log(101));
-  return clamp(shape * paceFactor, RUN_MIN, RUN_MAX);
+  const shape = 10 + 30 * (1 - Math.exp(-km / 130));
+  return clamp(shape * paceFactor, 10, RUN_MAX);
 }
 /**
  * 成绩卡里的时长：跨天行程显示「N 天 H 小时」，一天以内沿用 时:分:秒。
@@ -138,7 +139,7 @@ export class MotionStage {
   /** 片尾静止段的整帧快照：末段每帧只需 blit，不再重画地图/轨迹/成绩卡。 */
   private posterCache: HTMLCanvasElement | null = null;
 
-  constructor(canvas: HTMLCanvasElement, activity: Activity, map: TrackMap, theme: VideoTheme, follow?: VectorFollowLayer, globalView = false) {
+  constructor(canvas: HTMLCanvasElement, activity: Activity, map: TrackMap, theme: VideoTheme, follow?: VectorFollowLayer, globalView = false, targetTotal?: number) {
     this.canvas = canvas;
     this.activity = activity;
     this.map = map;
@@ -151,7 +152,15 @@ export class MotionStage {
     this.ctx.imageSmoothingEnabled = true;
     this.ctx.imageSmoothingQuality = 'high';
 
-    this.runDuration = runDurationFor(activity.distanceM, activity.avgSpeed);
+    // 目标时长档位（20/40/60s）：固定开销（封面/片头/逐刻停顿/片尾）与
+    // runDuration 无关，因此 runDuration = target − fixed 就能精确命中；
+    // 「自动」档才走距离公式。下限 8s 防极端短视频触发原生排程护栏。
+    this.moments = this.buildMoments();
+    const fixedSeconds = COVER_SECONDS + INTRO_SECONDS
+      + this.moments.length * PAUSE_SECONDS + OUTRO_SECONDS;
+    this.runDuration = targetTotal != null
+      ? clamp(targetTotal - fixedSeconds, RUN_MIN, 600)
+      : runDurationFor(activity.distanceM, activity.avgSpeed);
     const trip = activity.trip;
     this.display = {
       meters: trip?.totalMeters ?? activity.distanceM,
@@ -185,7 +194,6 @@ export class MotionStage {
       y: (bounds.minY + bounds.maxY) / 2,
     };
 
-    this.moments = this.buildMoments();
     this.schedule = this.buildSchedule();
     this.runEnd = this.schedule.length
       ? this.schedule[this.schedule.length - 1].end + (1 - this.schedule[this.schedule.length - 1].moment.progress) * this.runDuration

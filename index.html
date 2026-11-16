@@ -351,17 +351,16 @@
 
           <div class="export-speed-card" id="export-speed-card">
             <div class="es-head">
-              <span class="es-title">导出倍速</span>
+              <span class="es-title">视频时长</span>
               <span class="es-est" id="es-est">成片约 --</span>
             </div>
             <div class="es-seg" id="es-seg">
-              <button type="button" data-es="1" class="active">1×</button>
-              <button type="button" data-es="2">2×</button>
-              <button type="button" data-es="3">3×</button>
-              <button type="button" data-es="4">4×</button>
-              <button type="button" data-es="5">5×</button>
+              <button type="button" data-dur="auto" class="active">自动</button>
+              <button type="button" data-dur="20">20s</button>
+              <button type="button" data-dur="40">40s</button>
+              <button type="button" data-dur="60">60s</button>
             </div>
-            <p class="es-note">画面加速压缩时长，背景音乐保持原速</p>
+            <p class="es-note">自动按距离配时长；固定档位为成片总时长，预览与导出一致</p>
           </div>
 
           <button class="cta" id="export-btn" type="button"><svg><use href="#i-download"/></svg> 导出 1080P MP4</button>

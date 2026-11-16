@@ -143,10 +143,11 @@ const musicPlayer = new MusicPlayer();
 /** 创作页全屏播放态（CSS 覆盖层，不是系统 fullscreen）。 */
 let fsActive = false;
 /**
- * 导出倍速：只作用于成片画面（预览恒为 1× 原速）。
- * 倍速压缩的是画面时间线，背景音乐按原速渲染混音、随成片淡出。
+ * 目标时长档位：'auto' 按距离公式定时长；20/40/60 为成片总时长（秒，
+ * 含片头片尾）。预览与导出共用同一档位 —— 舞台直接按它建排程，
+ * 预览看到多长，成片就是多长（不再有独立的倍速压缩）。
  */
-let exportSpeed = 1;
+let exportLength: 'auto' | 20 | 40 | 60 = 'auto';
 let raf = 0;
 let basePlayhead = 0;
 let baseWall = 0;
@@ -322,12 +323,12 @@ function glPreviewReadyCallback(ok: boolean, arg: number | string): void {
   if (firstReady && !playing && !isStill && currentStage) startPlayback();
 }
 
-// 导出倍速记忆：默认 1×，换过就记住上次的选择。
+// 目标时长档位记忆：默认自动，换过就记住上次的选择。
 try {
-  const savedSpeed = Number(localStorage.getItem('fitmotion-export-speed'));
-  if (savedSpeed >= 1 && savedSpeed <= 5) exportSpeed = Math.round(savedSpeed);
+  const saved = localStorage.getItem('fitmotion-export-length');
+  if (saved === '20' || saved === '40' || saved === '60') exportLength = Number(saved) as 20 | 40 | 60;
 } catch {
-  // file:// WebView 可能禁存储，保持默认 1×
+  // file:// WebView 可能禁存储，保持默认自动
 }
 
 /**
@@ -422,8 +423,7 @@ async function boot(): Promise<void> {
     void (async () => {
       const token = studioToken;
       await musicPlayer.prepare(currentMusicId(), currentStage.duration);
-      // 倍速播放时换曲也要按当前倍速接上，否则音乐会慢半拍
-      if (playing && token === studioToken) await musicPlayer.play(playhead, Math.max(1, exportSpeed));
+      if (playing && token === studioToken) await musicPlayer.play(playhead, 1);
     })();
   });
   try {
@@ -614,21 +614,22 @@ function bindEvents(): void {
     }
   });
 
-  esSeg.querySelectorAll<HTMLButtonElement>('button[data-es]').forEach((button) => {
+  esSeg.querySelectorAll<HTMLButtonElement>('button[data-dur]').forEach((button) => {
     button.addEventListener('click', () => {
       if (exporting) return;
-      exportSpeed = Math.max(1, Math.min(5, Number(button.dataset.es ?? '1')));
+      const raw = button.dataset.dur ?? 'auto';
+      exportLength = raw === 'auto' ? 'auto' : Math.max(20, Math.min(60, Number(raw))) as 20 | 40 | 60;
       try {
-        localStorage.setItem('fitmotion-export-speed', String(exportSpeed));
+        localStorage.setItem('fitmotion-export-length', String(exportLength));
       } catch {
         // 存不了就本次会话内生效
       }
-      syncExportSpeedUi();
-      // 点击倍速 = 以该倍速从头预览播放，导出也是同一个倍速（单一选中态）。
-      if (!exporting && currentStage && canPlayback()) {
+      syncExportLengthUi();
+      // 点击档位 = 按新时长从头预览播放（预览与成片同一时间线，单一选中态）。
+      // mountStudio(at=0) 自带「从头自动开播」，无需再手动 startPlayback。
+      if (currentActivity && canPlayback()) {
         pausePlayback();
-        playhead = 0;
-        startPlayback();
+        mountStudio(currentActivity, activeTheme(), 0, false);
       }
     });
   });
@@ -763,7 +764,9 @@ function mountStudio(activity: Activity, theme: ReturnType<typeof activeTheme>, 
       overview: currentOverview,
     };
   }
-  currentStage = new MotionStage(stageCanvas, activity, currentMap, theme, currentFollow ?? undefined, viewMode === 'global');
+  // 时长档位直接建进舞台排程：预览与成片共用同一条时间线
+  currentStage = new MotionStage(stageCanvas, activity, currentMap, theme, currentFollow ?? undefined, viewMode === 'global',
+    exportLength === 'auto' ? undefined : exportLength);
   currentStage.setOverview(currentOverview);
   cacheMark(sessionHit ? 'session-hit' : 'session-miss');
   (window as unknown as { __fmSession?: StudioSession | null }).__fmSession = studioSession;
@@ -774,7 +777,7 @@ function mountStudio(activity: Activity, theme: ReturnType<typeof activeTheme>, 
   currentStage.renderAt(at);
   drawAmbient();
   updateTransport();
-  syncExportSpeedUi();
+  syncExportLengthUi();
   // 音乐缓冲在地图缓存的网络空档里悄悄渲染好，点播放立刻有声（全局视角
   // 也是视频，同样配乐）
   void musicPlayer.prepare(currentMusicId(), currentStage.duration);
@@ -1035,7 +1038,7 @@ async function prepareStudio(
     cacheMark('first-frame');
     drawAmbient();
     updateTransport();
-    syncExportSpeedUi();
+    syncExportLengthUi();
     // 留一拍让 100% 的进度条先上屏，再揭加载层/自动开播
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     if (token !== studioToken) return;
@@ -1468,23 +1471,20 @@ async function syncMusicToPlayhead(): Promise<void> {
   } catch {
     return;
   }
-  if (playing && token === studioToken) await musicPlayer.play(playhead, Math.max(1, exportSpeed));
+  if (playing && token === studioToken) await musicPlayer.play(playhead, 1);
 }
 
 function tick(now: number): void {
   if (!currentStage || !playing) return;
   // 测试钩子：预览播放头（供 e2e 工具采样，无运行时成本）
   (window as unknown as { __fitPlayhead?: number }).__fitPlayhead = playhead;
-  // 预览倍速与导出倍速共用 exportSpeed（同一选中态）：预览按倍速推进播放头，
-  // 导出成片同样按倍速压缩时间线，两边看到的节奏一致。
-  // 播放头逐帧推进并限幅（单帧最多走 1.5s×倍速）：限幅只拦截「主线程被
-  // 冻住几秒」的墙钟跳变（表现为进度条突然跳到中间）。上限不能压到 0.25s：
+  // 预览原速推进：时长档位直接建进舞台排程，预览看到的节奏就是成片节奏。
+  // 播放头逐帧推进并限幅（单帧最多走 1.5s）：限幅只拦截「主线程被冻住
+  // 几秒」的墙钟跳变（表现为进度条突然跳到中间）。上限不能压到 0.25s：
   // 长轨迹在手机上单帧渲染经常超过 250ms，限幅会把画面时间线拉长 20%+，
   // 而音乐缓冲走真实墙钟不受限幅——结果就是「音乐提前放完、画面还剩好几秒」。
-  const rate = Math.max(1, exportSpeed);
   const wallDelta = (now - baseWall) / 1000;
-  const clamped = wallDelta * rate > 1.5 * rate;
-  const next = basePlayhead + Math.min(1.5 * rate, wallDelta * rate);
+  const next = basePlayhead + Math.min(1.5, wallDelta);
   if (next >= currentStage.duration) {
     playhead = currentStage.duration;
     if (glPreviewActive && glPreviewReady) pushGlFrame(playhead);
@@ -1505,6 +1505,7 @@ function tick(now: number): void {
     currentStage.renderAt(playhead);
     drawAmbient();
   }
+  const clamped = wallDelta > 1.5;
   // 真发生了限幅（冻结/极端卡顿）：画面时间线与音乐墙钟脱节，把音乐拉回播放头
   if (clamped && musicPlayer.playing()) {
     void syncMusicToPlayhead();
@@ -1584,13 +1585,15 @@ function drawAmbient(): void {
   }
 }
 
-/** 导出倍速卡：选中态 + 成片时长估算（原时长 ÷ 倍速，下限 6 秒）。 */
-function syncExportSpeedUi(): void {
-  esSeg.querySelectorAll<HTMLButtonElement>('button[data-es]').forEach((button) => {
-    button.classList.toggle('active', Number(button.dataset.es ?? '1') === exportSpeed);
+/** 视频时长卡：选中态 + 成片时长展示（预览与成片共用舞台时长）。 */
+function syncExportLengthUi(): void {
+  esSeg.querySelectorAll<HTMLButtonElement>('button[data-dur]').forEach((button) => {
+    const raw = button.dataset.dur ?? 'auto';
+    const value = raw === 'auto' ? 'auto' : Number(raw);
+    button.classList.toggle('active', value === exportLength);
   });
   esEst.textContent = currentStage
-    ? `成片约 ${formatDuration(exportTimelineScale())}`
+    ? `成片约 ${formatDuration(currentStage.duration)}`
     : '成片约 --';
 }
 
@@ -1822,15 +1825,13 @@ function nativeMoments(activity: Activity): Array<{
 }
 
 /**
- * 导出时间线：导出卡里选的倍速作用于成片画面 —— 原生渲染器按
- * durationSec 建排程，整体除以倍速即等比加速。封底 6 秒，防止
- * 5× 遇上超短视频时触到原生排程的最小段护栏，画面比例失真。
- * 背景音乐不跟随倍速：按成片时长原速渲染（见下方 audio 段）。
+ * 导出时间线：导出卡选的目标时长已直接建进舞台排程，原生渲染器拿到的
+ * durationSec 就是预览时长 —— 预览与成片严格一致。背景音乐按成片时长
+ * 原速渲染混流。
  */
-function exportTimelineScale(): number {
+function exportDurationSec(): number {
   if (!currentStage) throw new Error('没有可导出的轨迹');
-  const speed = Math.max(1, Math.min(5, exportSpeed));
-  return Math.max(6, currentStage.duration / speed);
+  return currentStage.duration;
 }
 
 function nativeScenePayload(
@@ -1894,11 +1895,10 @@ function nativeScenePayload(
 }
 
 /**
- * 倍速标注：1× 不展示，>1× 显示「2× 倍速」供导出过程提示用。
+ * 时长档位标注：供导出过程提示用（「自动时长」/「目标 20 秒」等）。
  */
 function timelineLabel(): string {
-  const speed = Math.max(1, Math.min(5, exportSpeed));
-  return speed > 1 ? `${speed}× 倍速` : '1× 原速';
+  return exportLength === 'auto' ? '自动时长' : `目标 ${exportLength} 秒`;
 }
 
 async function exportNativeScene(): Promise<void> {
@@ -1969,9 +1969,9 @@ async function exportNativeScene(): Promise<void> {
   }
   const theme = activeTheme();
   const date = currentActivity.timeAvailable ? formatDateParts(currentActivity.startTime) : null;
-  // 成片时长在导出开始时锁定一次（画面按倍速加速后的长度），音频与视频
+  // 成片时长在导出开始时锁定一次（与预览同一舞台时长），音频与视频
   // 必须用同一个值，否则原生层的音画时长校验（200ms）会把整次导出打回。
-  const durationSec = exportTimelineScale();
+  const durationSec = exportDurationSec();
   const payload = nativeScenePayload(theme, date, durationSec);
 
   // 背景音乐：整轨渲染成 PCM（结尾 0.5s 已淡出），原生层编 AAC 混进 MP4。
